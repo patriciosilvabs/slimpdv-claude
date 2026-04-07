@@ -83,6 +83,10 @@ jobs:
           docker compose build frontend 2>&1 | tail -5
           docker compose up -d frontend 2>&1 | tail -3
 
+          # Reload nginx proxy so it re-resolves the new frontend container IP
+          echo "Reloading nginx proxy..."
+          docker exec slimpdv-nginx-proxy nginx -s reload 2>&1 || docker restart slimpdv-nginx-proxy 2>&1 || echo "nginx reload skipped (proxy not found)"
+
           echo "Applying backend patches..."
           docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
           rm -f /tmp/server_patched.js
