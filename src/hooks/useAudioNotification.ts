@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { PREDEFINED_SOUNDS, SoundType } from './useCustomSounds';
-import { playPredefinedSound, getPredefinedSoundUrl } from '@/utils/generateTone';
+import { playPredefinedSound, playAudioUrl, getPredefinedSoundUrl } from '@/utils/generateTone';
 import { usePersistentSettings } from './usePersistentSettings';
 
 interface NotificationSettings {
@@ -78,18 +78,13 @@ export function useAudioNotification() {
         // playPredefinedSound already has 500ms debounce built in
         await playPredefinedSound(selectedSoundId, settings.volume);
       } else {
-        // Custom sound — try URL first, fallback to predefined if it fails
+        // Custom sound — play via Web Audio API (background-safe), fallback to predefined
         const soundUrl = settings.customSoundUrls[type];
         if (soundUrl) {
           try {
-            const audio = new Audio(soundUrl);
-            audio.volume = settings.volume;
-            // audio.play() resolves when playback starts; if it throws (e.g. autoplay
-            // blocked, file not found), we catch below and use the predefined fallback.
-            await audio.play();
+            await playAudioUrl(soundUrl, settings.volume);
           } catch (customErr) {
             console.warn('[sound] Custom sound failed, using predefined fallback:', customErr);
-            // Fallback to the default predefined sound for this type
             const fallbackId = defaultSettings.selectedSounds[type] || 'beepClassic';
             await playPredefinedSound(fallbackId, settings.volume);
           }
@@ -154,9 +149,7 @@ export function useAudioNotification() {
       } else {
         const soundUrl = settings.customSoundUrls[type];
         if (soundUrl) {
-          const audio = new Audio(soundUrl);
-          audio.volume = settings.volume;
-          await audio.play();
+          await playAudioUrl(soundUrl, settings.volume);
         }
       }
     } catch (error) {

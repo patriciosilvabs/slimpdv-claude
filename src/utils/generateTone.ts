@@ -1,8 +1,18 @@
-// Generates valid audio tones programmatically using Web Audio API
+/**
+ * Audio engine for notifications.
+ *
+ * Strategy:
+ *  1. On first user interaction, AudioContext is created + resumed and common
+ *     sounds are pre-decoded into AudioBuffers (cached).
+ *  2. Playback uses Web Audio API (BufferSource) which continues working even
+ *     when the tab is minimised or in the background — unlike HTMLAudioElement
+ *     which is throttled/suspended by the browser in background tabs.
+ *  3. HTMLAudioElement is kept only as a last-resort fallback when Web Audio
+ *     fails completely (e.g. older mobile browsers).
+ */
 
-const audioCache = new Map<string, string>();
+// ─── AudioContext ────────────────────────────────────────────────────────────
 
-// Shared AudioContext — must be resumed via user gesture before audio can play.
 let _audioCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext {
@@ -12,22 +22,12 @@ function getAudioContext(): AudioContext {
   return _audioCtx;
 }
 
-/** Call this once inside a user-gesture handler (click / touchstart) to unlock audio. */
-export function unlockAudioContext(): void {
-  const ctx = getAudioContext();
-  if (ctx.state === 'suspended') {
-    ctx.resume().catch(() => {});
-  }
-}
-
-/** Ensure the audio context is running before every playback attempt. */
 async function ensureAudioContextRunning(): Promise<AudioContext> {
   let ctx = getAudioContext();
   if (ctx.state === 'suspended') {
     try {
       await ctx.resume();
-    } catch (_) {
-      // Resume failed — recreate context
+    } catch {
       _audioCtx = null;
       ctx = getAudioContext();
     }
@@ -39,6 +39,8 @@ async function ensureAudioContextRunning(): Promise<AudioContext> {
   return ctx;
 }
 
+// ─── WAV generation ──────────────────────────────────────────────────────────
+
 function createWavBlob(samples: Float32Array, sampleRate: number): Blob {
   const numChannels = 1;
   const bitsPerSample = 16;
@@ -48,7 +50,6 @@ function createWavBlob(samples: Float32Array, sampleRate: number): Blob {
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
 
-  // WAV header
   const writeString = (offset: number, str: string) => {
     for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
   };
@@ -57,7 +58,7 @@ function createWavBlob(samples: Float32Array, sampleRate: number): Blob {
   writeString(8, 'WAVE');
   writeString(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
+  view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true);
@@ -66,7 +67,6 @@ function createWavBlob(samples: Float32Array, sampleRate: number): Blob {
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
 
-  // Write samples
   let offset = 44;
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
@@ -85,7 +85,6 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-// Simple tone generator
 function generateSamples(
   sampleRate: number,
   segments: { freq: number; duration: number; type: 'sine' | 'square'; volume: number; decay?: boolean }[],
@@ -96,7 +95,7 @@ function generateSamples(
   for (const seg of segments) {
     totalSamples += Math.floor(seg.duration * sampleRate) + gapSamples;
   }
-  totalSamples -= gapSamples; // no gap after last
+  totalSamples -= gapSamples;
 
   const samples = new Float32Array(totalSamples);
   let offset = 0;
@@ -116,37 +115,30 @@ function generateSamples(
       samples[offset + i] = val * seg.volume * envelope;
     }
     offset += len;
-    if (si < segments.length - 1) {
-      offset += gapSamples; // silence gap
-    }
+    if (si < segments.length - 1) offset += gapSamples;
   }
-
   return samples;
 }
 
-export async function getPredefinedSoundUrl(soundId: string): Promise<string> {
-  if (audioCache.has(soundId)) return audioCache.get(soundId)!;
-
+/** Generate WAV blob for a given sound ID. */
+function generateSoundBlob(soundId: string): Blob {
   const sampleRate = 22050;
   let samples: Float32Array;
 
   switch (soundId) {
     case 'beepClassic':
-      // 800Hz square wave, 200ms
       samples = generateSamples(sampleRate, [
-        { freq: 800, duration: 0.2, type: 'square', volume: 0.5 }
+        { freq: 800, duration: 0.2, type: 'square', volume: 0.5 },
       ]);
       break;
 
     case 'bell':
-      // 1200Hz sine with decay, 400ms
       samples = generateSamples(sampleRate, [
-        { freq: 1200, duration: 0.4, type: 'sine', volume: 0.7, decay: true }
+        { freq: 1200, duration: 0.4, type: 'sine', volume: 0.7, decay: true },
       ]);
       break;
 
     case 'dingDong':
-      // Two notes: 880Hz then 660Hz
       samples = generateSamples(sampleRate, [
         { freq: 880, duration: 0.25, type: 'sine', volume: 0.6, decay: true },
         { freq: 660, duration: 0.35, type: 'sine', volume: 0.6, decay: true },
@@ -154,7 +146,6 @@ export async function getPredefinedSoundUrl(soundId: string): Promise<string> {
       break;
 
     case 'urgentAlert':
-      // 3 rapid beeps at 1000Hz
       samples = generateSamples(sampleRate, [
         { freq: 1000, duration: 0.1, type: 'square', volume: 0.6 },
         { freq: 1000, duration: 0.1, type: 'square', volume: 0.6 },
@@ -162,51 +153,147 @@ export async function getPredefinedSoundUrl(soundId: string): Promise<string> {
       ], 80);
       break;
 
-    case 'cashRegister':
-      // Descending tone 1400→800Hz
-      {
-        const len = Math.floor(0.3 * sampleRate);
-        samples = new Float32Array(len);
-        for (let i = 0; i < len; i++) {
-          const t = i / sampleRate;
-          const progress = i / len;
-          const freq = 1400 - 600 * progress;
-          samples[i] = Math.sin(2 * Math.PI * freq * t) * 0.6 * (1 - progress * 0.5);
-        }
+    case 'cashRegister': {
+      const len = Math.floor(0.3 * sampleRate);
+      samples = new Float32Array(len);
+      for (let i = 0; i < len; i++) {
+        const t = i / sampleRate;
+        const progress = i / len;
+        const freq = 1400 - 600 * progress;
+        samples[i] = Math.sin(2 * Math.PI * freq * t) * 0.6 * (1 - progress * 0.5);
       }
       break;
+    }
 
     default:
-      // Fallback beep
       samples = generateSamples(sampleRate, [
-        { freq: 800, duration: 0.2, type: 'square', volume: 0.5 }
+        { freq: 800, duration: 0.2, type: 'square', volume: 0.5 },
       ]);
   }
 
-  const blob = createWavBlob(samples, sampleRate);
+  return createWavBlob(samples, sampleRate);
+}
+
+// ─── Caches ──────────────────────────────────────────────────────────────────
+
+/** Data-URL cache (for legacy/fallback paths) */
+const _dataUrlCache = new Map<string, string>();
+
+/** Pre-decoded AudioBuffer cache — used for background-safe playback */
+const _bufferCache = new Map<string, AudioBuffer>();
+
+/** Returns a data URL for the given sound (legacy, for <audio> elements) */
+export async function getPredefinedSoundUrl(soundId: string): Promise<string> {
+  if (_dataUrlCache.has(soundId)) return _dataUrlCache.get(soundId)!;
+  const blob = generateSoundBlob(soundId);
   const url = await blobToDataUrl(blob);
-  audioCache.set(soundId, url);
+  _dataUrlCache.set(soundId, url);
   return url;
 }
 
-// Debounce lock: prevent same sound from double-firing within 500ms
+/** Returns a decoded AudioBuffer, decoding from scratch if not cached. */
+async function getDecodedBuffer(soundId: string): Promise<AudioBuffer> {
+  if (_bufferCache.has(soundId)) return _bufferCache.get(soundId)!;
+  const ctx = await ensureAudioContextRunning();
+  const blob = generateSoundBlob(soundId);
+  const arrayBuffer = await blob.arrayBuffer();
+  const decoded = await ctx.decodeAudioData(arrayBuffer);
+  _bufferCache.set(soundId, decoded);
+  return decoded;
+}
+
+// ─── Unlock + prewarm ────────────────────────────────────────────────────────
+
+const COMMON_SOUNDS = ['dingDong', 'beepClassic', 'bell', 'urgentAlert'];
+let _prewarmed = false;
+
+/**
+ * Call once inside a user-gesture handler (click / touchstart) to:
+ *  1. Resume the AudioContext
+ *  2. Pre-decode common sounds into AudioBuffers so they're ready for
+ *     immediate background playback.
+ */
+export function unlockAudioContext(): void {
+  const ctx = getAudioContext();
+  const doResume = ctx.state === 'suspended'
+    ? ctx.resume()
+    : Promise.resolve();
+
+  doResume.then(() => {
+    if (_prewarmed) return;
+    _prewarmed = true;
+    // Pre-decode common sounds in background (non-blocking)
+    for (const id of COMMON_SOUNDS) {
+      getDecodedBuffer(id).catch(() => {});
+    }
+  }).catch(() => {});
+}
+
+// ─── Playback ─────────────────────────────────────────────────────────────────
+
+/** Debounce lock: prevent same sound from firing twice within 500 ms */
 const _playingLocks = new Map<string, number>();
 
+/**
+ * Play a sound via Web Audio API (works in background tabs / minimised window).
+ * Falls back to HTMLAudioElement if Web Audio fails.
+ */
 export async function playPredefinedSound(soundId: string, volume = 0.7): Promise<void> {
-  // Deduplicate: if this exact sound fired less than 500ms ago, skip
   const now = Date.now();
-  const lastPlayed = _playingLocks.get(soundId) ?? 0;
-  if (now - lastPlayed < 500) return;
+  if (now - (_playingLocks.get(soundId) ?? 0) < 500) return;
   _playingLocks.set(soundId, now);
 
   try {
-    const url = await getPredefinedSoundUrl(soundId);
-    // Use HTMLAudioElement instead of Web Audio API — works without AudioContext
-    // and is not blocked by autoplay policies after any user interaction.
-    const audio = new Audio(url);
-    audio.volume = volume;
-    await audio.play();
-  } catch (error) {
-    console.warn('[sound] playPredefinedSound failed:', soundId, error);
+    const ctx = await ensureAudioContextRunning();
+    const buffer = await getDecodedBuffer(soundId);
+
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.value = Math.max(0, Math.min(1, volume));
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+  } catch (webAudioErr) {
+    console.warn('[sound] Web Audio failed, trying HTMLAudioElement:', soundId, webAudioErr);
+    try {
+      const url = await getPredefinedSoundUrl(soundId);
+      const audio = new Audio(url);
+      audio.volume = Math.max(0, Math.min(1, volume));
+      await audio.play();
+    } catch (fallbackErr) {
+      console.warn('[sound] HTMLAudioElement fallback also failed:', soundId, fallbackErr);
+    }
+  }
+}
+
+/**
+ * Play any audio URL (http/https or data:) via Web Audio API.
+ * Used for custom sounds uploaded by the user.
+ * Falls back to HTMLAudioElement if Web Audio fails.
+ */
+export async function playAudioUrl(url: string, volume = 0.7): Promise<void> {
+  try {
+    const ctx = await ensureAudioContextRunning();
+    const resp = await fetch(url);
+    const arrayBuffer = await resp.arrayBuffer();
+    const buffer = await ctx.decodeAudioData(arrayBuffer);
+
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.value = Math.max(0, Math.min(1, volume));
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+  } catch (webAudioErr) {
+    console.warn('[sound] playAudioUrl Web Audio failed, trying HTMLAudioElement:', webAudioErr);
+    try {
+      const audio = new Audio(url);
+      audio.volume = Math.max(0, Math.min(1, volume));
+      await audio.play();
+    } catch (fallbackErr) {
+      console.warn('[sound] playAudioUrl fallback also failed:', fallbackErr);
+    }
   }
 }
