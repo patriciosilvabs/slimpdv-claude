@@ -125,20 +125,8 @@ jobs:
           # Install web-push inside the new container
           docker exec slimpdv-backend npm install web-push --no-save 2>&1 | tail -3 || true
 
-          # Ensure CJS mode: remove "type":"module" from package.json so require() works
-          docker exec slimpdv-backend node -e "
-          const fs = require('fs');
-          try {
-            const pkg = JSON.parse(fs.readFileSync('/app/package.json', 'utf8'));
-            if (pkg.type) {
-              delete pkg.type;
-              fs.writeFileSync('/app/package.json', JSON.stringify(pkg, null, 2));
-              console.log('[patch] Removed type:module from package.json — CJS mode enabled');
-            } else {
-              console.log('[patch] package.json already CJS compatible');
-            }
-          } catch(e) { console.log('[patch] package.json note:', e.message); }
-          " 2>/dev/null || echo "package.json CJS update skipped"
+          # Show module system so we know ESM vs CJS
+          docker exec slimpdv-backend node -e "const fs=require('fs'); try{const p=JSON.parse(fs.readFileSync('/app/package.json','utf8')); console.log('[patch] package.json type:', p.type||'(commonjs)')}catch(e){console.log('[patch] package.json:', e.message)}" 2>/dev/null || true
 
           echo "VPS host Node.js: $(node --version 2>/dev/null || echo unknown)"
 
@@ -169,39 +157,9 @@ jobs:
           docker restart slimpdv-backend
           sleep 5
 
-          # ── FORCE-INJECT VAPID route as final guaranteed fallback ─────────────────
-          # Runs after restart to confirm or directly inject into whichever file node executes
-          VAPID_DIRECT=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/push/vapid-public-key)
+          # ── VERIFY VAPID route post-restart ──────────────────────────────────────
+          VAPID_DIRECT=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/push/vapid-public-key 2>/dev/null || echo "000")
           echo "Direct VAPID test post-restart: HTTP $VAPID_DIRECT"
-          if [ "$VAPID_DIRECT" != "200" ]; then
-            echo "VAPID route missing post-restart — force-injecting directly into container..."
-            docker exec slimpdv-backend node -e "
-              const fs = require('fs');
-              const files = ['/app/dist/server.js', '/app/server.js'];
-              let fixed = false;
-              for (const f of files) {
-                try {
-                  let c = fs.readFileSync(f, 'utf8');
-                  if (c.includes('/api/push/vapid-public-key')) { console.log('Route present in', f); continue; }
-                  // Anchor: inject before app.listen or before last app.use
-                  let idx = c.indexOf('app.listen(');
-                  if (idx < 0) idx = c.lastIndexOf('app.use(');
-                  if (idx < 0) { console.log('No anchor found in', f); continue; }
-                  const route = '\n// FORCE_PUSH_INJECT\napp.get(\'/api/push/vapid-public-key\', function(req,res){ res.json({publicKey:process.env.VAPID_PUBLIC_KEY||null}); });\n';
-                  c = c.slice(0, idx) + route + c.slice(idx);
-                  fs.writeFileSync(f, c);
-                  console.log('Force-injected route into:', f);
-                  fixed = true;
-                } catch(e) { console.log('Skip', f, ':', e.message); }
-              }
-              if (fixed) process.exit(2);
-            " 2>&1; INJECT_EXIT=$?
-            if [ "$INJECT_EXIT" = "2" ]; then
-              echo "Re-restarting backend with injected route..."
-              docker restart slimpdv-backend
-              sleep 4
-            fi
-          fi
 
           # ── START FRONTEND ────────────────────────────────────────────────────────
           echo "Starting frontend..."

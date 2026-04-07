@@ -107,24 +107,28 @@ const orderReadyIdx = code.indexOf(ORDER_READY_ANCHOR);
 // ── Build push infrastructure code ───────────────────────────────────────────
 const pushSetup = `
 // PATCH: push_notifications_v3
-// ── Web Push (VAPID) setup ────────────────────────────────────────────────────
+// ── Web Push (VAPID) setup — ESM + CJS compatible ────────────────────────────
 let webpush = null;
-try {
-  webpush = require('web-push');
-  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
-  const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
-  const vapidEmail   = process.env.VAPID_EMAIL || 'mailto:admin@pdvslim.com.br';
-  if (vapidPublic && vapidPrivate) {
-    webpush.setVapidDetails(vapidEmail, vapidPublic, vapidPrivate);
-    console.log('[push] web-push initialized, public key:', vapidPublic.slice(0, 20) + '...');
-  } else {
-    console.warn('[push] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set — push notifications disabled');
+(async () => {
+  try {
+    // dynamic import() works in both ESM and CJS (Node 12+)
+    const mod = await import('web-push');
+    webpush = mod.default || mod;
+    const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
+    const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+    const vapidEmail   = process.env.VAPID_EMAIL || 'mailto:admin@pdvslim.com.br';
+    if (vapidPublic && vapidPrivate) {
+      webpush.setVapidDetails(vapidEmail, vapidPublic, vapidPrivate);
+      console.log('[push] web-push initialized, public key:', vapidPublic.slice(0, 20) + '...');
+    } else {
+      console.warn('[push] VAPID keys not set — push notifications disabled');
+      webpush = null;
+    }
+  } catch (e) {
+    console.warn('[push] web-push not available:', e.message);
     webpush = null;
   }
-} catch (e) {
-  console.warn('[push] web-push module not available:', e.message);
-  webpush = null;
-}
+})();
 
 // Create push_subscriptions table if it does not exist
 (async () => {
