@@ -43,6 +43,7 @@ jobs:
         run: |
           rsync -az --delete src/ root@72.61.25.92:/var/www/slimpdv/src/ -e "ssh -i ~/.ssh/vps_key"
           rsync -az patches/ root@72.61.25.92:/var/www/slimpdv/patches/ -e "ssh -i ~/.ssh/vps_key"
+          rsync -az --delete --exclude='node_modules' --exclude='dist' backend/ root@72.61.25.92:/var/www/slimpdv/backend/ -e "ssh -i ~/.ssh/vps_key"
           scp -i ~/.ssh/vps_key version.json root@72.61.25.92:/var/www/slimpdv/version.json
 
       - name: Run DB migrations
