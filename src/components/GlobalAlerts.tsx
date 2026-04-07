@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTables, useTableMutations } from '@/hooks/useTables';
 import { useOrders, useOrderMutations, type Order } from '@/hooks/useOrders';
 import { useTableWaitSettings } from '@/hooks/useTableWaitSettings';
@@ -51,6 +51,8 @@ function sendOsNotification(title: string, body: string) {
 export function GlobalAlerts() {
   const { tenantId } = useTenant();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isKds = pathname.startsWith('/kds');
 
   const { data: tables } = useTables();
   const { data: orders } = useOrders(['pending', 'preparing', 'ready', 'delivered']);
@@ -116,9 +118,12 @@ export function GlobalAlerts() {
       toast.success(label, {
         description: 'A cozinha finalizou o preparo',
         duration: 8000,
-        action: isDineIn
-          ? { label: 'Ver Mesa', onClick: () => navigate('/tables') }
-          : { label: 'Ver Pedidos', onClick: () => navigate('/orders') },
+        // No navigation buttons on KDS — staff should stay on the KDS screen
+        ...(isKds ? {} : {
+          action: isDineIn
+            ? { label: 'Ver Mesa', onClick: () => navigate('/tables') }
+            : { label: 'Ver Pedidos', onClick: () => navigate('/orders') },
+        }),
       });
       notifiedReadyOrdersRef.current.add(order.id);
     });
@@ -157,7 +162,9 @@ export function GlobalAlerts() {
       toast.success(label, {
         description: 'Um novo pedido foi recebido',
         duration: 6000,
-        action: { label: 'Ver', onClick: () => navigate('/orders') },
+        ...(isKds ? {} : {
+          action: { label: 'Ver', onClick: () => navigate('/orders') },
+        }),
       });
     });
   }, [orders, tables, audioSettings.enabled, playNewOrderSound, tenantId, navigate]);
