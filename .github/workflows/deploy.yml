@@ -79,30 +79,36 @@ jobs:
 
           cp patches/patch_*.js /tmp/
 
-          echo "Building frontend..."
-          docker compose build frontend 2>&1 | tail -5
-          docker compose up -d frontend 2>&1 | tail -3
-
-          # Reload nginx proxy so it re-resolves the new frontend container IP
-          echo "Reloading nginx proxy..."
-          docker exec slimpdv-nginx-proxy nginx -s reload 2>&1 || docker restart slimpdv-nginx-proxy 2>&1 || echo "nginx reload skipped (proxy not found)"
-
-          echo "Applying backend patches..."
-          docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
-          rm -f /tmp/server_patched.js
-
-          # Install web-push for push notifications (idempotent)
-          docker exec slimpdv-backend npm install web-push --no-save 2>&1 | tail -3 || true
-
-          # Generate VAPID keys once and persist (single-line node, no heredoc)
+          # ── GENERATE VAPID KEYS (before any container ops) ───────────────────────
           if [ ! -f /var/www/slimpdv/vapid-keys.json ]; then
-            docker exec slimpdv-backend node -e 'try{const w=require("web-push");process.stdout.write(JSON.stringify(w.generateVAPIDKeys()));}catch(e){const c=require("crypto");const{privateKey:pk,publicKey:pub}=c.generateKeyPairSync("ec",{namedCurve:"prime256v1"});const pd=pub.export({type:"spki",format:"der"});const rd=pk.export({type:"pkcs8",format:"der"});const b=x=>Buffer.from(x).toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");process.stdout.write(JSON.stringify({publicKey:b(pd.slice(27)),privateKey:b(rd.slice(-32))}));}' > /var/www/slimpdv/vapid-keys.json 2>/dev/null
+            node -e 'try{const c=require("crypto");const{privateKey:pk,publicKey:pub}=c.generateKeyPairSync("ec",{namedCurve:"prime256v1"});const pd=pub.export({type:"spki",format:"der"});const rd=pk.export({type:"pkcs8",format:"der"});const b=x=>Buffer.from(x).toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");process.stdout.write(JSON.stringify({publicKey:b(pd.slice(27)),privateKey:b(rd.slice(-32))}))}catch(e){process.stdout.write(JSON.stringify({publicKey:"",privateKey:""}))}' > /var/www/slimpdv/vapid-keys.json
             echo "VAPID keys generated"
           fi
           VAPID_PUB=$(node -e "process.stdout.write(require('/var/www/slimpdv/vapid-keys.json').publicKey)")
           VAPID_PRIV=$(node -e "process.stdout.write(require('/var/www/slimpdv/vapid-keys.json').privateKey)")
           printf 'services:\n  backend:\n    environment:\n      VAPID_PUBLIC_KEY: "%s"\n      VAPID_PRIVATE_KEY: "%s"\n      VAPID_EMAIL: "mailto:admin@pdvslim.com.br"\n' "$VAPID_PUB" "$VAPID_PRIV" > /var/www/slimpdv/docker-compose.vapid.yml
           echo "VAPID public key: ${VAPID_PUB:0:20}..."
+
+          # ── BUILD IMAGES ──────────────────────────────────────────────────────────
+          echo "Building backend image (Node.js 20)..."
+          docker compose build backend 2>&1 | tail -5
+
+          echo "Building frontend image..."
+          docker compose build frontend 2>&1 | tail -5
+
+          # ── RECREATE BACKEND with new image + VAPID env ───────────────────────────
+          echo "Recreating backend with new image + VAPID..."
+          docker compose -f docker-compose.yml -f docker-compose.vapid.yml up -d backend 2>&1 | tail -3
+          sleep 3
+          docker exec slimpdv-backend node --version 2>&1 || true
+
+          # ── PATCH SERVER.JS ───────────────────────────────────────────────────────
+          echo "Applying backend patches..."
+          docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
+          rm -f /tmp/server_patched.js
+
+          # Install web-push inside the new container
+          docker exec slimpdv-backend npm install web-push --no-save 2>&1 | tail -3 || true
 
           for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist patch_kds_tenant_name patch_kds_tenant_info patch_push_notifications; do
             echo "  -> $patch"
@@ -111,20 +117,19 @@ jobs:
 
           node --check /tmp/server_patched.js
 
-          # Step 1: Recreate backend container with VAPID env vars (uses original image server.js)
-          if [ -f /var/www/slimpdv/docker-compose.vapid.yml ]; then
-            docker compose -f docker-compose.yml -f docker-compose.vapid.yml up -d --no-build backend 2>&1 | tail -3
-          else
-            docker compose up -d --no-build backend 2>&1 | tail -3
-          fi
-          sleep 2
-
-          # Step 2: NOW copy patched server.js into the freshly created container
+          # ── COPY patched server.js + restart (no recreate) ────────────────────────
           docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
-
-          # Step 3: Restart the process WITHOUT recreating (keeps VAPID env + patched server.js)
           docker restart slimpdv-backend
           sleep 5
+
+          # ── START FRONTEND ────────────────────────────────────────────────────────
+          echo "Starting frontend..."
+          docker compose up -d frontend 2>&1 | tail -3
+
+          # Reload nginx proxy
+          echo "Reloading nginx proxy..."
+          docker exec slimpdv-nginx-proxy nginx -s reload 2>&1 || docker restart slimpdv-nginx-proxy 2>&1 || echo "nginx reload skipped"
+          sleep 2
 
           docker ps --filter name=slimpdv --format "{{.Names}}: {{.Status}}"
 
