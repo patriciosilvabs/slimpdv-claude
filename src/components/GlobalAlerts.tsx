@@ -105,12 +105,11 @@ export function GlobalAlerts() {
         ? `🔔 Mesa ${table?.number || '?'} - Pedido Pronto!`
         : `🔔 Pedido #${(order as any).order_number || order.id.slice(-4)} Pronto!`;
 
+      // Always attempt sound — browser allows it if user has interacted with the page.
+      // Also send OS notification when tab is hidden so staff sees it even in background.
+      if (audioSettings.enabled) playOrderReadySound();
       if (document.hidden) {
-        // Aba oculta/minimizada: notificação nativa do OS (sem bloqueio de áudio)
         sendOsNotification(label, 'A cozinha finalizou o preparo');
-      } else {
-        // Aba visível: som + toast
-        if (audioSettings.enabled) playOrderReadySound();
       }
 
       // Toast sempre (aparece quando o usuário voltar para a aba, ou imediatamente se visível)
