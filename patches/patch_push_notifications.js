@@ -17,9 +17,22 @@ const OUTPUT = '/tmp/server_patched.js';
 
 let code = fs.readFileSync(INPUT, 'utf8');
 
-if (code.includes('// PATCH: push_notifications')) {
-  console.log('push_notifications patch already applied — skipping');
+if (code.includes('// PATCH: push_notifications_v2')) {
+  console.log('push_notifications v2 already applied — skipping');
   fs.writeFileSync(OUTPUT, code);
+  process.exit(0);
+}
+
+// Upgrade v1 → v2: just fix the route paths (nginx strips /api/ prefix)
+if (code.includes('// PATCH: push_notifications')) {
+  console.log('Upgrading push_notifications v1 → v2 (fixing /api/push/ → /push/ routes)...');
+  code = code
+    .replace("app.get('/api/push/vapid-public-key'", "app.get('/push/vapid-public-key'")
+    .replace("app.post('/api/push/subscribe'", "app.post('/push/subscribe'")
+    .replace("app.delete('/api/push/unsubscribe'", "app.delete('/push/unsubscribe'")
+    .replace('// PATCH: push_notifications\n', '// PATCH: push_notifications_v2\n');
+  fs.writeFileSync(OUTPUT, code);
+  console.log('push_notifications upgraded to v2: routes now at /push/* (nginx strips /api/)');
   process.exit(0);
 }
 
@@ -40,7 +53,7 @@ const orderReadyIdx = code.indexOf(ORDER_READY_ANCHOR);
 
 // ── Build push infrastructure code ───────────────────────────────────────────
 const pushSetup = `
-// PATCH: push_notifications
+// PATCH: push_notifications_v2
 // ── Web Push (VAPID) setup ────────────────────────────────────────────────────
 let webpush = null;
 try {
@@ -116,14 +129,14 @@ async function sendPushToTenant(tenantId, payload) {
   }
 }
 
-// ── GET /api/push/vapid-public-key ────────────────────────────────────────────
-app.get('/api/push/vapid-public-key', (req, res) => {
+// ── GET /push/vapid-public-key (nginx strips /api/ prefix before forwarding) ──
+app.get('/push/vapid-public-key', (req, res) => {
   const key = process.env.VAPID_PUBLIC_KEY || null;
   res.json({ publicKey: key });
 });
 
-// ── POST /api/push/subscribe ──────────────────────────────────────────────────
-app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
+// ── POST /push/subscribe ──────────────────────────────────────────────────────
+app.post('/push/subscribe', authenticateToken, async (req, res) => {
   const { endpoint, keys } = req.body || {};
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'endpoint and keys required' });
@@ -149,8 +162,18 @@ app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
   }
 });
 
-// ── DELETE /api/push/unsubscribe ──────────────────────────────────────────────
-app.delete('/api/push/unsubscribe', authenticateToken, async (req, res) => {
+// ── DELETE /push/unsubscribe (also accept POST for browser compatibility) ─────
+app.post('/push/unsubscribe', authenticateToken, async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+  try {
+    await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2', [endpoint, req.user.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.delete('/push/unsubscribe', authenticateToken, async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
   try {
@@ -190,4 +213,4 @@ const finalAnchorIdx = patchedCode.indexOf(ANCHOR_ROUTES);
 patchedCode = patchedCode.slice(0, finalAnchorIdx) + pushSetup + patchedCode.slice(finalAnchorIdx);
 
 fs.writeFileSync(OUTPUT, patchedCode);
-console.log('push_notifications patch applied: VAPID setup + subscribe/unsubscribe routes + order-ready push trigger');
+console.log('push_notifications v2 applied: routes at /push/* (nginx strips /api/) + subscribe/unsubscribe + order-ready trigger');
