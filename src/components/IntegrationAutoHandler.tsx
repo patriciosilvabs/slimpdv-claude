@@ -326,41 +326,8 @@ export function IntegrationAutoHandler() {
             const displayId = dn ? `#${dn}` : ((order as any).external_display_id || `#${order.id.slice(-4).toUpperCase()}`);
             toast.success(`Pedido ${displayId} aceito automaticamente`);
             console.log('[AutoAccept] Internal order auto-accepted:', order.id);
-
-            // Auto-print kitchen ticket for internal orders
-            const printKey = `print:${order.id}`;
-            if (!isOrderProcessed(printKey)) {
-              markOrderProcessed(printKey);
-              try {
-                const { data: fullOrder } = await supabase
-                  .from('orders')
-                  .select('*, order_items(*, products(name), product_variations(name), order_item_extras(extra_name, price, kds_category))')
-                  .eq('id', order.id)
-                  .single();
-
-                if (fullOrder?.order_items?.length) {
-                  const orderType = (order as any).order_type;
-                  const ticketData: KitchenTicketData = {
-                    items: (fullOrder.order_items as any[]).map((item: any) => ({
-                      productName: item.products?.name || item.product_variations?.name || 'Produto',
-                      quantity: item.quantity,
-                      notes: item.notes || undefined,
-                      extras: (item.order_item_extras || []).map((e: any) =>
-                        e.extra_name.includes(': ') ? e.extra_name.split(': ').slice(1).join(': ') : e.extra_name
-                      ),
-                    })),
-                    orderNumber: dn ? String(dn) : order.id.slice(0, 8).toUpperCase(),
-                    orderType: orderType === 'dine_in' ? 'dine_in' : orderType === 'delivery' ? 'delivery' : 'takeaway',
-                    customerName: (order as any).customer_name || undefined,
-                    createdAt: new Date().toISOString(),
-                  };
-                  const printResult = await printKitchenTicketRef.current(ticketData);
-                  console.log('[AutoAccept] Kitchen ticket print result:', printResult, 'for order', order.id);
-                }
-              } catch (printErr) {
-                console.error('[AutoAccept] Failed to auto-print:', printErr);
-              }
-            }
+            // Note: printing is handled by the order creation flow (Counter/NewOrderSheet/Tables)
+            // to avoid double printing. This loop only handles auto-accept.
           }
         } catch (err) {
           console.error('[AutoAccept] Error accepting order:', order.id, err);

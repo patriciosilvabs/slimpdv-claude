@@ -767,6 +767,8 @@ export default function Tables() {
           } else {
             toast.error('Erro ao imprimir comanda. Verifique a impressora.');
           }
+          // Mark print dedup so IntegrationAutoHandler polling doesn't double-print this order
+          localStorage.setItem(`_int_processed_print:${order.id}`, String(Date.now()));
         } catch (err) {
           console.error('[Print Debug] Auto print failed:', err);
           toast.error('Erro ao imprimir comanda.');
