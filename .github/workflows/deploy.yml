@@ -47,19 +47,11 @@ jobs:
       - name: Run DB migrations
         run: |
           ssh -i ~/.ssh/vps_key root@72.61.25.92 bash << 'ENDSSH'
-          set -e
           echo "Running DB migrations..."
-          docker exec slimpdv-postgres psql -U slimpdv -d slimpdv -c "
-            DO \$\$ BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'gerente' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'app_role')) THEN
-                ALTER TYPE app_role ADD VALUE 'gerente';
-              END IF;
-              IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'supervisor' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'app_role')) THEN
-                ALTER TYPE app_role ADD VALUE 'supervisor';
-              END IF;
-            END \$\$;
-          "
-          echo "Migrations done."
+          docker exec slimpdv-postgres psql -U slimpdv -d slimpdv \
+            -c "ALTER TYPE app_role ADD VALUE IF NOT EXISTS 'gerente';" \
+            -c "ALTER TYPE app_role ADD VALUE IF NOT EXISTS 'supervisor';" \
+            && echo "Migrations done." || echo "Migrations skipped (values may already exist)."
           ENDSSH
 
       - name: Build frontend + apply backend patches

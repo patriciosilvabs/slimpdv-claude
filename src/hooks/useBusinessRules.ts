@@ -76,7 +76,7 @@ const DEFAULT_RULES: BusinessRulesConfig = {
 
 export function useBusinessRules() {
   const { getSetting, updateSetting, isLoading } = useGlobalSettings();
-  const { role, isAdmin, isGerente, isSupervisor } = useUserRole();
+  const { isAdmin, isCashier, isWaiter, isGerente, isSupervisor } = useUserRole();
 
   const stored = getSetting('business_rules');
   const rules: BusinessRulesConfig = stored
@@ -98,9 +98,9 @@ export function useBusinessRules() {
     if (isAdmin) return rules.discount_limit_manager;
     if (isGerente) return rules.discount_limit_gerente;
     if (isSupervisor) return rules.discount_limit_supervisor;
-    if (role === 'cashier') return rules.discount_limit_cashier;
-    if (role === 'waiter') return rules.discount_limit_waiter;
-    return rules.discount_limit_manager; // default for unknown roles
+    if (isCashier) return rules.discount_limit_cashier;
+    if (isWaiter) return rules.discount_limit_waiter;
+    return rules.discount_limit_waiter; // default for other roles
   };
 
   const isDiscountAboveLimit = (discountPercent: number): boolean => {
