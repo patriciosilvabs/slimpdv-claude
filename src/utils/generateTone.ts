@@ -201,21 +201,11 @@ export async function playPredefinedSound(soundId: string, volume = 0.7): Promis
 
   try {
     const url = await getPredefinedSoundUrl(soundId);
-    const ctx = await ensureAudioContextRunning();
-
-    // Decode the WAV data URL via fetch → ArrayBuffer → AudioBuffer
-    const response = await fetch(url);
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-    const gainNode = ctx.createGain();
-    gainNode.gain.value = volume;
-    gainNode.connect(ctx.destination);
-
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(gainNode);
-    source.start();
+    // Use HTMLAudioElement instead of Web Audio API — works without AudioContext
+    // and is not blocked by autoplay policies after any user interaction.
+    const audio = new Audio(url);
+    audio.volume = volume;
+    await audio.play();
   } catch (error) {
     console.warn('[sound] playPredefinedSound failed:', soundId, error);
   }

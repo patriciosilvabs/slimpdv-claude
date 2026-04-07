@@ -84,11 +84,9 @@ export function useAudioNotification() {
           try {
             const audio = new Audio(soundUrl);
             audio.volume = settings.volume;
-            // Timeout: if custom sound doesn't load in 2s, use fallback
-            await Promise.race([
-              audio.play(),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-            ]);
+            // audio.play() resolves when playback starts; if it throws (e.g. autoplay
+            // blocked, file not found), we catch below and use the predefined fallback.
+            await audio.play();
           } catch (customErr) {
             console.warn('[sound] Custom sound failed, using predefined fallback:', customErr);
             // Fallback to the default predefined sound for this type
