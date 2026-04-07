@@ -91,7 +91,8 @@ export function GlobalAlerts() {
       if (order.status !== 'ready') return;
       if (notifiedReadyOrdersRef.current.has(order.id)) return;
 
-      const readyAt = (order as any).ready_at;
+      // Use ready_at if available, fallback to updated_at when order became ready
+      const readyAt = (order as any).ready_at || order.updated_at;
       if (!readyAt) return;
 
       const readyTime = new Date(readyAt).getTime();
