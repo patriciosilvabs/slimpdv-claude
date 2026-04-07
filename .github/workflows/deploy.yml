@@ -86,14 +86,55 @@ jobs:
           docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
           rm -f /tmp/server_patched.js
 
-          for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist patch_kds_tenant_name patch_kds_tenant_info; do
+          # Install web-push for push notifications (idempotent)
+          docker exec slimpdv-backend npm install web-push --no-save 2>&1 | tail -3 || true
+
+          # Generate VAPID keys once and persist them
+          if [ ! -f /var/www/slimpdv/vapid-keys.json ]; then
+            docker exec slimpdv-backend node -e "
+              try {
+                const wp = require('web-push');
+                const k = wp.generateVAPIDKeys();
+                process.stdout.write(JSON.stringify(k));
+              } catch(e) {
+                const { generateKeyPairSync } = require('crypto');
+                const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+                const pubDer = publicKey.export({ type: 'spki', format: 'der' });
+                const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+                const b64 = b => Buffer.from(b).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+                process.stdout.write(JSON.stringify({ publicKey: b64(pubDer.slice(27)), privateKey: b64(privDer.slice(-32)) }));
+              }
+            " > /var/www/slimpdv/vapid-keys.json 2>/dev/null
+            echo "VAPID keys generated"
+          fi
+          VAPID_PUB=$(node -e "const k=require('/var/www/slimpdv/vapid-keys.json'); console.log(k.publicKey);")
+          VAPID_PRIV=$(node -e "const k=require('/var/www/slimpdv/vapid-keys.json'); console.log(k.privateKey);")
+          docker exec -e VAPID_PUBLIC_KEY="$VAPID_PUB" -e VAPID_PRIVATE_KEY="$VAPID_PRIV" slimpdv-backend true 2>/dev/null || true
+
+          # Write VAPID env to docker-compose override so container always has it
+          cat > /var/www/slimpdv/docker-compose.vapid.yml << VAPIDEOF
+services:
+  backend:
+    environment:
+      VAPID_PUBLIC_KEY: "${VAPID_PUB}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIV}"
+      VAPID_EMAIL: "mailto:admin@pdvslim.com.br"
+VAPIDEOF
+          echo "VAPID public key: ${VAPID_PUB:0:20}..."
+
+          for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist patch_kds_tenant_name patch_kds_tenant_info patch_push_notifications; do
             echo "  -> $patch"
             node /tmp/${patch}.js || { echo "PATCH ERROR: $patch"; exit 1; }
           done
 
           node --check /tmp/server_patched.js
           docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
-          docker restart slimpdv-backend
+          # Restart with VAPID env if override file exists
+          if [ -f /var/www/slimpdv/docker-compose.vapid.yml ]; then
+            docker compose -f docker-compose.yml -f docker-compose.vapid.yml up -d --no-build backend 2>&1 | tail -3
+          else
+            docker restart slimpdv-backend
+          fi
           sleep 4
 
           docker ps --filter name=slimpdv-backend --format "Backend: {{.Status}}"

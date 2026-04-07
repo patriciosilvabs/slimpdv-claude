@@ -21,6 +21,7 @@ import { APP_VERSION } from '@/lib/appVersion';
 import { AppFooter } from '@/components/layout/AppFooter';
 import { ManagerApprovalListener } from '@/components/ManagerApprovalListener';
 import { OperatorTargetWidget } from '@/components/OperatorTargetWidget';
+import { PwaInstallBanner } from '@/components/PwaInstallBanner';
 
 interface NavItem {
   name: string;
@@ -134,6 +135,7 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <PwaInstallBanner />
           <OfflineIndicator />
           <PrinterStatusIndicator />
         </div>
