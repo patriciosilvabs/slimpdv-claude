@@ -110,14 +110,21 @@ jobs:
           done
 
           node --check /tmp/server_patched.js
-          docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
-          # Restart with VAPID env if override file exists
+
+          # Step 1: Recreate backend container with VAPID env vars (uses original image server.js)
           if [ -f /var/www/slimpdv/docker-compose.vapid.yml ]; then
             docker compose -f docker-compose.yml -f docker-compose.vapid.yml up -d --no-build backend 2>&1 | tail -3
           else
-            docker restart slimpdv-backend
+            docker compose up -d --no-build backend 2>&1 | tail -3
           fi
-          sleep 4
+          sleep 2
+
+          # Step 2: NOW copy patched server.js into the freshly created container
+          docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
+
+          # Step 3: Restart the process WITHOUT recreating (keeps VAPID env + patched server.js)
+          docker restart slimpdv-backend
+          sleep 5
 
           docker ps --filter name=slimpdv --format "{{.Names}}: {{.Status}}"
 
