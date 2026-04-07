@@ -52,18 +52,16 @@ const NEW_TOOL_DEF = `// PATCH: listar_pedidos v2
   },`;
 
 if (!code.includes(OLD_TOOL_DEF)) {
-  console.error('ERROR: listar_pedidos tool definition anchor not found');
-  // Debug: show what we're looking for vs what's in the file
+  console.log('listar_pedidos tool definition anchor not found — skipping tool def replacement');
   const idx = code.indexOf("name: 'listar_pedidos'");
   if (idx >= 0) {
     const ctx = code.slice(Math.max(0, idx - 5), idx + 200);
-    console.error('Context around listar_pedidos:', JSON.stringify(ctx));
+    console.log('Context around listar_pedidos:', JSON.stringify(ctx));
   }
-  process.exit(1);
+} else {
+  code = code.replace(OLD_TOOL_DEF, NEW_TOOL_DEF);
+  console.log('listar_pedidos tool definition updated');
 }
-code = code.replace(OLD_TOOL_DEF, NEW_TOOL_DEF);
-console.log('listar_pedidos tool definition updated');
-
 // ── 2. Replace case implementation ────────────────────────────────────────────
 const OLD_CASE = `case 'listar_pedidos': {
       let q = \`SELECT o.id, o.status, o.total, o.order_type, o.customer_name, o.created_at,
@@ -100,13 +98,13 @@ const NEW_CASE = `case 'listar_pedidos': {
     }`;
 
 if (!code.includes(OLD_CASE)) {
-  console.error('ERROR: listar_pedidos case anchor not found');
+  console.log('listar_pedidos case anchor not found — skipping case replacement');
   const caseIdx = code.indexOf("case 'listar_pedidos'");
-  if (caseIdx >= 0) console.error('Case context:', JSON.stringify(code.slice(caseIdx, caseIdx + 300)));
-  process.exit(1);
+  if (caseIdx >= 0) console.log('Case context:', JSON.stringify(code.slice(caseIdx, caseIdx + 300)));
+} else {
+  code = code.replace(OLD_CASE, NEW_CASE);
+  console.log('listar_pedidos case updated');
 }
-code = code.replace(OLD_CASE, NEW_CASE);
-console.log('listar_pedidos case updated');
 
 // ── 3. Upgrade listar_pagamentos tool definition ──────────────────────────────
 const OLD_PAG_TOOL = `'Lista pagamentos recebidos com totais por método (dinheiro, cartão, pix, etc.).',
