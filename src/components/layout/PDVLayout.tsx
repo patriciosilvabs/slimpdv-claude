@@ -19,6 +19,7 @@ import { Loader2, LayoutDashboard, UtensilsCrossed, ShoppingBag, Package, Credit
 import logoSlim from '@/assets/logo-slim.png';
 import { APP_VERSION } from '@/lib/appVersion';
 import { AppFooter } from '@/components/layout/AppFooter';
+import { ManagerApprovalListener } from '@/components/ManagerApprovalListener';
 
 interface NavItem {
   name: string;
@@ -277,6 +278,7 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+      <ManagerApprovalListener />
       <AppFooter />
     </div>
   );

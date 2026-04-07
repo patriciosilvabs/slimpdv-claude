@@ -28,6 +28,9 @@ import { AccessDenied } from '@/components/auth/AccessDenied';
 import { ProductDetailDialog, SelectedComplement, SubItemComplement } from '@/components/order/ProductDetailDialog';
 import { PizzaConfig } from '@/components/order/ProductDetailDialog';
 import { CancelOrderDialog } from '@/components/order/CancelOrderDialog';
+import { useBusinessRules } from '@/hooks/useBusinessRules';
+import { useRequestApproval, ApprovalRequest } from '@/hooks/useApprovalRequest';
+import { ApprovalWaitingDialog } from '@/components/ApprovalWaitingDialog';
 import { printCustomerReceipt } from '@/components/receipt/CustomerReceipt';
 import { usePrinterOptional, SectorPrintItem } from '@/contexts/PrinterContext';
 import { KitchenTicketData, CancellationTicketData } from '@/utils/escpos';
@@ -136,6 +139,8 @@ export default function Counter() {
   const isMobile = useIsMobile();
   const { data: pizzaData, isLoading: pizzaDataLoading } = usePizzaProducts();
   const pendingProductRef = useRef<any>(null);
+  const { rules: businessRules, isDiscountAboveLimit, getDiscountLimitForCurrentUser } = useBusinessRules();
+  const { createRequest: createApprovalRequest, watchRequest } = useRequestApproval();
   
   const canAddItems = hasPermission('counter_add_items');
   const canApplyDiscount = hasPermission('counter_apply_discount');
@@ -178,7 +183,13 @@ export default function Counter() {
   const [serviceChargeEnabled, setServiceChargeEnabled] = useState(false);
   const [serviceChargePercent, setServiceChargePercent] = useState(10);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  // Discount approval state
+  const [discountApprovalRequest, setDiscountApprovalRequest] = useState<ApprovalRequest | null>(null);
+  const [waitingDiscountApproval, setWaitingDiscountApproval] = useState(false);
+  const [pendingPrintReceipt, setPendingPrintReceipt] = useState(false);
+  const discountApprovedRef = useRef(false);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
+  const { data: watchedDiscountRequest } = watchRequest(discountApprovalRequest?.id ?? null);
   
   // Cancel order state
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
@@ -600,6 +611,28 @@ export default function Counter() {
   const handleConfirmPayment = async (printReceipt: boolean = false) => {
     if (paymentAmountNum < finalTotal) {
       toast({ title: 'Valor insuficiente', variant: 'destructive' });
+      return;
+    }
+
+    // Rule 7: Discount limit check (skip if already approved by manager)
+    if (!discountApprovedRef.current && discountType === 'percentage' && discountValue > 0 && isDiscountAboveLimit(discountValue)) {
+      const userLimit = getDiscountLimitForCurrentUser();
+      try {
+        const req = await createApprovalRequest.mutateAsync({
+          rule_type: 'discount',
+          context: {
+            discount_percent: discountValue,
+            user_limit: userLimit,
+            order_number: 'balcão',
+            order_id: 'counter',
+          },
+        });
+        setDiscountApprovalRequest(req);
+        setPendingPrintReceipt(printReceipt);
+        setWaitingDiscountApproval(true);
+      } catch {
+        toast({ title: 'Erro ao solicitar aprovação de desconto', variant: 'destructive' });
+      }
       return;
     }
 
@@ -1568,6 +1601,32 @@ export default function Counter() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ApprovalWaitingDialog
+        open={waitingDiscountApproval}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWaitingDiscountApproval(false);
+            setDiscountApprovalRequest(null);
+          }
+        }}
+        request={watchedDiscountRequest ?? discountApprovalRequest}
+        onApproved={() => {
+          setWaitingDiscountApproval(false);
+          setDiscountApprovalRequest(null);
+          discountApprovedRef.current = true;
+          handleConfirmPayment(pendingPrintReceipt).finally(() => {
+            discountApprovedRef.current = false;
+          });
+        }}
+        onDenied={(denialReason) => {
+          setWaitingDiscountApproval(false);
+          setDiscountApprovalRequest(null);
+          toast({ title: `Desconto negado pelo gerente${denialReason ? `: ${denialReason}` : ''}`, variant: 'destructive' });
+        }}
+        title="Aprovação de desconto"
+        description={`Solicitando aprovação para ${discountValue}% de desconto`}
+      />
 
       <CancelOrderDialog
         open={cancelDialogOpen}

@@ -14,6 +14,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, XCircle } from 'lucide-react';
+import { useBusinessRules } from '@/hooks/useBusinessRules';
+import { useRequestApproval, ApprovalRequest } from '@/hooks/useApprovalRequest';
+import { ApprovalWaitingDialog } from '@/components/ApprovalWaitingDialog';
+import { toast } from 'sonner';
 
 interface CancelOrderDialogProps {
   open: boolean;
@@ -42,6 +46,12 @@ export function CancelOrderDialog({
   const [reason, setReason] = useState('');
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
+  const [waitingApproval, setWaitingApproval] = useState(false);
+
+  const { rules } = useBusinessRules();
+  const { createRequest, watchRequest } = useRequestApproval();
+  const { data: watchedRequest } = watchRequest(approvalRequest?.id ?? null);
 
   const handleSuggestionClick = (suggestion: string) => {
     if (suggestion === 'Outro motivo') {
@@ -56,7 +66,7 @@ export function CancelOrderDialog({
     setShowConfirmation(true);
   };
 
-  const handleConfirm = () => {
+  const doConfirm = () => {
     setIsProcessing(true);
     // Fecha AMBOS dialogs IMEDIATAMENTE para evitar flicker
     setShowConfirmation(false);
@@ -70,6 +80,28 @@ export function CancelOrderDialog({
     }, 100);
   };
 
+  const handleConfirm = async () => {
+    if (rules.require_auth_cancellation) {
+      // Need manager approval first
+      setShowConfirmation(false);
+      try {
+        const req = await createRequest.mutateAsync({
+          rule_type: 'cancellation',
+          context: {
+            order_number: orderInfo || 'pedido',
+            reason: reason.trim(),
+          },
+        });
+        setApprovalRequest(req);
+        setWaitingApproval(true);
+      } catch {
+        toast.error('Erro ao solicitar aprovação');
+      }
+    } else {
+      doConfirm();
+    }
+  };
+
   const handleClose = () => {
     if (isProcessing) return;
     setReason('');
@@ -81,6 +113,30 @@ export function CancelOrderDialog({
 
   return (
     <>
+      {/* Approval waiting dialog */}
+      <ApprovalWaitingDialog
+        open={waitingApproval}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWaitingApproval(false);
+            setApprovalRequest(null);
+          }
+        }}
+        request={watchedRequest ?? approvalRequest}
+        onApproved={() => {
+          setWaitingApproval(false);
+          setApprovalRequest(null);
+          doConfirm();
+        }}
+        onDenied={(denialReason) => {
+          setWaitingApproval(false);
+          setApprovalRequest(null);
+          toast.error(`Cancelamento negado pelo gerente${denialReason ? `: ${denialReason}` : ''}`);
+        }}
+        title="Aguardando aprovação do gerente"
+        description="Solicitação de cancelamento enviada ao gerente"
+      />
+
       {/* Main Dialog */}
       <AlertDialog open={open && !showConfirmation && !isProcessing} onOpenChange={handleClose}>
         <AlertDialogContent className="max-w-md bg-background">

@@ -42,7 +42,8 @@ import { WebhooksSettings } from '@/components/settings/WebhooksSettings';
 import { DeliveryLogisticsSettings } from '@/components/settings/DeliveryLogisticsSettings';
 import { AutomationSettings } from '@/components/settings/AutomationSettings';
 import { AiAssistantSettings } from '@/components/settings/AiAssistantSettings';
-const VALID_SECTIONS: SettingsSection[] = ['stores', 'tables', 'kds', 'kds-stations', 'kds-devices', 'orders', 'printers', 'cash-register', 'production-targets', 'production-api', 'automation', 'notifications', 'announcements', 'push', 'users', 'roles', 'invitations', 'integrations', 'webhooks', 'delivery-logistics', 'ai-assistant'];
+import { BusinessRulesSettings } from '@/components/settings/BusinessRulesSettings';
+const VALID_SECTIONS: SettingsSection[] = ['stores', 'tables', 'kds', 'kds-stations', 'kds-devices', 'orders', 'printers', 'cash-register', 'production-targets', 'production-api', 'automation', 'notifications', 'announcements', 'push', 'users', 'roles', 'invitations', 'integrations', 'webhooks', 'delivery-logistics', 'ai-assistant', 'business-rules'];
 
 // Hook to check if current tenant has any admins
 function useHasAdmins(tenantId: string | null) {
@@ -215,6 +216,8 @@ export default function Settings() {
         return <DeliveryLogisticsSettings />;
       case 'ai-assistant':
         return <AiAssistantSettings />;
+      case 'business-rules':
+        return <BusinessRulesSettings />;
       default:
         return <StoresSettings />;
     }
@@ -283,6 +286,7 @@ export default function Settings() {
                   <option value="production-targets">Metas de Produção</option>
                   <option value="production-api">API de Produção</option>
                   <option value="automation">Automação</option>
+                  <option value="business-rules">Regras de Negócio</option>
                 </optgroup>
                 <optgroup label="Notificações">
                   <option value="notifications">Sons</option>

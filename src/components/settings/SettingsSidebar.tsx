@@ -47,7 +47,8 @@ export type SettingsSection =
   | 'integrations'
   | 'webhooks'
   | 'delivery-logistics'
-  | 'ai-assistant';
+  | 'ai-assistant'
+  | 'business-rules';
 
 // Export section info for reuse (breadcrumb, etc.)
 export const SECTION_INFO: Record<SettingsSection, { label: string; icon: LucideIcon }> = {
@@ -72,6 +73,7 @@ export const SECTION_INFO: Record<SettingsSection, { label: string; icon: Lucide
   webhooks: { label: 'Delivery Pay', icon: Truck },
   'delivery-logistics': { label: 'Logística Delivery', icon: Truck },
   'ai-assistant': { label: 'IA Assistente', icon: Bot },
+  'business-rules': { label: 'Regras de Negócio', icon: Shield },
 };
 
 interface SettingsSidebarProps {
@@ -99,6 +101,7 @@ const sections = [
       { id: 'production-targets' as const, label: 'Metas de Produção', icon: Target },
       { id: 'production-api' as const, label: 'API de Produção', icon: Server },
       { id: 'automation' as const, label: 'Integrações Auto', icon: Zap },
+      { id: 'business-rules' as const, label: 'Regras de Negócio', icon: Shield },
     ],
   },
   {
