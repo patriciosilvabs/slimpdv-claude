@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,10 +8,12 @@ import { useTenant } from '@/hooks/useTenant';
 import { Building2, Plus, ExternalLink, Check, Settings, Copy, Link2, Globe, Share2 } from 'lucide-react';
 import { useTenantContext } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
+import { StoreConfigModal } from './StoreConfigModal';
 
 export function StoresSettings() {
   const navigate = useNavigate();
   const { tenantId } = useTenant();
+  const [configStore, setConfigStore] = useState<{ id: string; name: string; slug: string; created_at: string; is_active?: boolean } | null>(null);
   const { setActiveTenant } = useTenantContext();
   const { stores, isLoading, isOwnerOfGroup } = useGroupStores();
 
@@ -215,10 +218,10 @@ export function StoresSettings() {
                 {/* Store actions */}
                 <div className="flex items-center gap-2 pt-1">
                   {isCurrentStore ? (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => navigate('/settings/tables')}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfigStore(store)}
                       className="gap-2"
                     >
                       <Settings className="h-4 w-4" />
@@ -240,6 +243,15 @@ export function StoresSettings() {
             </Card>
           );
         })
+      )}
+
+      {/* Store config modal */}
+      {configStore && (
+        <StoreConfigModal
+          store={configStore}
+          open={!!configStore}
+          onClose={() => setConfigStore(null)}
+        />
       )}
 
       {/* Info sobre replicação */}
