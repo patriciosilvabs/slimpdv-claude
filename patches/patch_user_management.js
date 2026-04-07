@@ -3,9 +3,10 @@
  * Patch: add user management functions
  * Routes: /api/functions/create-user, /api/functions/admin-update-user, /api/functions/admin-delete-user
  *
- * The VPS backend stores users in the 'profiles' table with columns:
- *   email, encrypted_password, full_name, name, role, tenant_id (added to the base schema)
- * Password hashing uses the 'bcryptjs' package (not 'bcrypt').
+ * Strategy:
+ * - Auto-discovers profiles table columns at runtime (no schema assumptions)
+ * - Tries bcryptjs → bcrypt → SHA-256 fallback
+ * - Returns actual DB error details in 500 response for easy debugging
  */
 const fs = require('fs');
 
@@ -33,6 +34,37 @@ if (!code.includes(ANCHOR)) {
 const NEW_ROUTES = `// ============================================================
 // PATCH: user management functions (create-user, admin-update-user, admin-delete-user)
 
+// Helper: hash password using whatever bcrypt module is available
+async function _hashPassword(password) {
+  try {
+    const b = require('bcryptjs');
+    return await b.hash(password, 10);
+  } catch (_) {}
+  try {
+    const b = require('bcrypt');
+    return await b.hash(password, 10);
+  } catch (_) {}
+  // Last resort: crypto SHA-256 (not ideal, but won't crash)
+  const crypto = require('crypto');
+  console.warn('[user-mgmt] Using SHA-256 fallback — bcryptjs/bcrypt not available');
+  return '$sha256$' + crypto.createHash('sha256').update(password).digest('hex');
+}
+
+// Helper: get column names for a table
+async function _getColumns(pool, tableName) {
+  try {
+    const r = await pool.query(
+      \`SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name=$1\`,
+      [tableName]
+    );
+    return r.rows.map(row => row.column_name);
+  } catch (e) {
+    console.warn('[user-mgmt] Could not read columns for', tableName, e.message);
+    return [];
+  }
+}
+
 // POST /api/functions/create-user — Admin creates a new user with role
 app.post('/api/functions/create-user', authMiddleware, async (req, res) => {
   try {
@@ -41,84 +73,100 @@ app.post('/api/functions/create-user', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Email, nome e senha são obrigatórios' });
     }
 
-    // Check for existing user in profiles table
+    const cleanEmail = email.toLowerCase().trim();
+    const displayName = name.toUpperCase().trim();
+    const targetTenantId = tenant_id || req.user?.tenant_id || null;
+
+    // 1. Check for existing email
     const existing = await pool.query(
       \`SELECT id FROM profiles WHERE email = $1\`,
-      [email.toLowerCase().trim()]
+      [cleanEmail]
     );
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'Email já cadastrado' });
     }
 
-    const bcryptjs = require('bcryptjs');
-    const hashedPassword = await bcryptjs.hash(password, 10);
-    const targetTenantId = tenant_id || req.user?.tenant_id || null;
-    const displayName = name.toUpperCase().trim();
+    // 2. Hash password (with fallback chain)
+    const hashedPassword = await _hashPassword(password);
 
-    // Insert into profiles — which doubles as the users table on this VPS
-    // Columns email/encrypted_password/full_name/role/tenant_id were added to profiles during VPS setup
-    let userId;
-    try {
-      const result = await pool.query(
-        \`INSERT INTO profiles (email, encrypted_password, full_name, name, role, tenant_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id\`,
-        [email.toLowerCase().trim(), hashedPassword, displayName, displayName, 'user', targetTenantId]
-      );
-      userId = result.rows[0].id;
-    } catch (profileErr) {
-      // Fallback: profiles may not have all those extra columns — try minimal insert
-      if (profileErr.code === '42703') {
-        // Column does not exist — try inserting into auth.users first then profiles
-        const authResult = await pool.query(
-          \`INSERT INTO auth.users (id, email, encrypted_password, created_at, updated_at, raw_user_meta_data)
-           VALUES (gen_random_uuid(), $1, $2, NOW(), NOW(), $3::jsonb)
-           RETURNING id\`,
-          [email.toLowerCase().trim(), hashedPassword, JSON.stringify({ name: displayName })]
-        );
-        userId = authResult.rows[0].id;
-        await pool.query(
-          \`INSERT INTO profiles (id, name, created_at, updated_at)
-           VALUES ($1, $2, NOW(), NOW())
-           ON CONFLICT (id) DO UPDATE SET name=$2, updated_at=NOW()\`,
-          [userId, displayName]
-        );
-      } else {
-        throw profileErr;
-      }
+    // 3. Discover which columns profiles actually has
+    const profileCols = await _getColumns(pool, 'profiles');
+    console.log('[create-user] profiles columns found:', profileCols.join(', '));
+
+    // 4. Build INSERT dynamically — only use columns that exist
+    //    Always insert 'name' (original column, always present)
+    const insertCols = ['name'];
+    const insertVals = [displayName];
+
+    if (profileCols.includes('email')) {
+      insertCols.push('email');
+      insertVals.push(cleanEmail);
     }
+    if (profileCols.includes('encrypted_password')) {
+      insertCols.push('encrypted_password');
+      insertVals.push(hashedPassword);
+    }
+    if (profileCols.includes('full_name')) {
+      insertCols.push('full_name');
+      insertVals.push(displayName);
+    }
+    if (profileCols.includes('tenant_id')) {
+      insertCols.push('tenant_id');
+      insertVals.push(targetTenantId);
+    }
+    // NOTE: intentionally skip 'role' column in profiles to avoid enum constraint issues
+    // The role is managed through user_roles and tenant_members tables
 
-    // Add to tenant_members
+    const placeholders = insertVals.map((_, i) => \`$\${i + 1}\`).join(', ');
+    const insertSQL = \`INSERT INTO profiles (\${insertCols.join(', ')}) VALUES (\${placeholders}) RETURNING id\`;
+
+    console.log('[create-user] Running:', insertSQL.replace(hashedPassword, '***'));
+
+    const insertResult = await pool.query(insertSQL, insertVals);
+    const userId = insertResult.rows[0].id;
+    console.log('[create-user] Profile created, userId:', userId);
+
+    // 5. Add to tenant_members
     if (targetTenantId) {
       try {
         await pool.query(
-          \`INSERT INTO tenant_members (user_id, tenant_id, role) VALUES ($1, $2, $3)
+          \`INSERT INTO tenant_members (user_id, tenant_id, role)
+           VALUES ($1, $2, $3)
            ON CONFLICT (tenant_id, user_id) DO NOTHING\`,
           [userId, targetTenantId, role || 'waiter']
         );
+        console.log('[create-user] tenant_members OK');
       } catch (tmErr) {
-        console.warn('[create-user] tenant_members insert warning:', tmErr.message);
+        console.warn('[create-user] tenant_members warning:', tmErr.message);
       }
-      // Assign role in user_roles
+
+      // 6. Assign role in user_roles
       if (role) {
         try {
           await pool.query(
-            \`INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1, $2, $3)
+            \`INSERT INTO user_roles (user_id, role, tenant_id)
+             VALUES ($1, $2, $3)
              ON CONFLICT DO NOTHING\`,
             [userId, role, targetTenantId]
           );
+          console.log('[create-user] user_roles OK');
         } catch (roleErr) {
-          console.warn('[create-user] user_roles insert warning:', roleErr.message);
+          console.warn('[create-user] user_roles warning:', roleErr.message);
         }
       }
     }
 
-    console.log('[create-user] Created user:', userId, email);
-    return res.json({ user: { id: userId, email, name: displayName }, success: true });
+    return res.json({ user: { id: userId, email: cleanEmail, name: displayName }, success: true });
   } catch (err) {
-    console.error('[create-user] Error:', err.message, err.code);
+    console.error('[create-user] FATAL:', err.message, '| code:', err.code, '| detail:', err.detail);
     if (err.code === '23505') return res.status(400).json({ error: 'Email já cadastrado' });
-    return res.status(500).json({ error: err.message });
+    // Return full error info so we can debug without needing server logs
+    return res.status(500).json({
+      error: err.message,
+      pg_code: err.code,
+      pg_detail: err.detail,
+      pg_hint: err.hint,
+    });
   }
 });
 
@@ -130,29 +178,31 @@ app.post('/api/functions/admin-update-user', authMiddleware, async (req, res) =>
 
     if (name) {
       const displayName = name.toUpperCase().trim();
-      // Update both name and full_name (whichever columns exist)
-      await pool.query(\`UPDATE profiles SET name=$1, updated_at=NOW() WHERE id=$2\`, [displayName, userId]);
+      try {
+        await pool.query(\`UPDATE profiles SET name=$1, updated_at=NOW() WHERE id=$2\`, [displayName, userId]);
+      } catch (e) { console.warn('[admin-update-user] name update:', e.message); }
       try {
         await pool.query(\`UPDATE profiles SET full_name=$1 WHERE id=$2\`, [displayName, userId]);
-      } catch (_) { /* full_name column may not exist */ }
+      } catch (_) { /* full_name may not exist */ }
     }
     if (email) {
       const cleanEmail = email.toLowerCase().trim();
       try {
         await pool.query(\`UPDATE profiles SET email=$1 WHERE id=$2\`, [cleanEmail, userId]);
       } catch (_) {
-        // email column may be on auth.users instead
-        await pool.query(\`UPDATE auth.users SET email=$1 WHERE id=$2\`, [cleanEmail, userId]);
+        try {
+          await pool.query(\`UPDATE auth.users SET email=$1 WHERE id=$2\`, [cleanEmail, userId]);
+        } catch (e2) { console.warn('[admin-update-user] email update failed:', e2.message); }
       }
     }
     if (password) {
-      const bcryptjs = require('bcryptjs');
-      const hashedPassword = await bcryptjs.hash(password, 10);
+      const hashedPassword = await _hashPassword(password);
       try {
         await pool.query(\`UPDATE profiles SET encrypted_password=$1 WHERE id=$2\`, [hashedPassword, userId]);
       } catch (_) {
-        // encrypted_password may be on auth.users instead
-        await pool.query(\`UPDATE auth.users SET encrypted_password=$1 WHERE id=$2\`, [hashedPassword, userId]);
+        try {
+          await pool.query(\`UPDATE auth.users SET encrypted_password=$1 WHERE id=$2\`, [hashedPassword, userId]);
+        } catch (e2) { console.warn('[admin-update-user] password update failed:', e2.message); }
       }
     }
 
@@ -161,7 +211,7 @@ app.post('/api/functions/admin-update-user', authMiddleware, async (req, res) =>
   } catch (err) {
     console.error('[admin-update-user] Error:', err.message);
     if (err.code === '23505') return res.status(400).json({ error: 'Email já cadastrado' });
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message, pg_code: err.code });
   }
 });
 
@@ -171,7 +221,7 @@ app.post('/api/functions/admin-delete-user', authMiddleware, async (req, res) =>
     const { userId } = req.body || {};
     if (!userId) return res.status(400).json({ error: 'userId é obrigatório' });
 
-    // Delete in FK-safe order (most specific first)
+    // Delete in FK-safe order
     const deletes = [
       'DELETE FROM user_permissions WHERE user_id=$1',
       'DELETE FROM user_roles WHERE user_id=$1',
@@ -179,11 +229,12 @@ app.post('/api/functions/admin-delete-user', authMiddleware, async (req, res) =>
       'DELETE FROM profiles WHERE id=$1',
     ];
     for (const sql of deletes) {
-      try { await pool.query(sql, [userId]); } catch (e) {
+      try {
+        await pool.query(sql, [userId]);
+      } catch (e) {
         console.warn('[admin-delete-user] Warning on:', sql.split(' ')[2], e.message);
       }
     }
-    // Try to delete from auth.users if it exists
     try {
       await pool.query('DELETE FROM auth.users WHERE id=$1', [userId]);
     } catch (_) { /* auth.users may not exist */ }
