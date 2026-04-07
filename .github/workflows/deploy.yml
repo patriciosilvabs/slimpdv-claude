@@ -241,43 +241,11 @@ jobs:
           fi
 
           # ── NGINX: serve VAPID key directly as static response ───────────────────
-          # This is the reliable fallback — nginx returns the key without touching backend.
-          # We inject INSIDE the existing server{} block via a shell script in the container.
+          # patch_nginx_vapid.sh is in the patches/ dir (rsynced to VPS already).
+          # It injects location blocks inside the nginx server{} block.
           echo "=== Configuring nginx VAPID static response ==="
-          cat > /tmp/patch_nginx_vapid.sh << NGINXEOF
-#!/bin/sh
-CONF=/etc/nginx/conf.d/default.conf
-if grep -q "vapid-public-key" "\$CONF" 2>/dev/null; then
-  echo "nginx VAPID already configured"
-  exit 0
-fi
-if [ ! -f "\$CONF" ]; then
-  echo "default.conf not found"
-  exit 0
-fi
-cp "\$CONF" "\$CONF.bak"
-awk -v key="$VAPID_PUB" '
-/server[[:space:]]*\{/ && !done {
-  print
-  printf "    location = /api/push/vapid-public-key {\n"
-  printf "        add_header Content-Type \"application/json\";\n"
-  printf "        add_header Access-Control-Allow-Origin \"*\";\n"
-  printf "        return 200 '"'"'{\"publicKey\":\"%s\"}'"'"';\n", key
-  printf "    }\n"
-  printf "    location = /push/vapid-public-key {\n"
-  printf "        add_header Content-Type \"application/json\";\n"
-  printf "        add_header Access-Control-Allow-Origin \"*\";\n"
-  printf "        return 200 '"'"'{\"publicKey\":\"%s\"}'"'"';\n", key
-  printf "    }\n"
-  done=1
-  next
-}
-{ print }
-' "\$CONF" > /tmp/nginx_new.conf && mv /tmp/nginx_new.conf "\$CONF"
-echo "nginx VAPID locations injected"
-NGINXEOF
-          docker cp /tmp/patch_nginx_vapid.sh slimpdv-nginx-proxy:/tmp/patch_nginx_vapid.sh 2>/dev/null && \
-            docker exec slimpdv-nginx-proxy sh /tmp/patch_nginx_vapid.sh 2>/dev/null && \
+          docker cp /var/www/slimpdv/patches/patch_nginx_vapid.sh slimpdv-nginx-proxy:/tmp/patch_nginx_vapid.sh 2>/dev/null && \
+            docker exec slimpdv-nginx-proxy sh /tmp/patch_nginx_vapid.sh "$VAPID_PUB" 2>&1 && \
             docker exec slimpdv-nginx-proxy nginx -t 2>&1 && \
             docker exec slimpdv-nginx-proxy nginx -s reload 2>/dev/null && \
             echo "nginx VAPID static config applied" || \
