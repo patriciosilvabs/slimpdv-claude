@@ -44,6 +44,24 @@ jobs:
           rsync -az patches/ root@72.61.25.92:/var/www/slimpdv/patches/ -e "ssh -i ~/.ssh/vps_key"
           scp -i ~/.ssh/vps_key version.json root@72.61.25.92:/var/www/slimpdv/version.json
 
+      - name: Run DB migrations
+        run: |
+          ssh -i ~/.ssh/vps_key root@72.61.25.92 bash << 'ENDSSH'
+          set -e
+          echo "Running DB migrations..."
+          docker exec slimpdv-postgres psql -U slimpdv -d slimpdv -c "
+            DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'gerente' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'app_role')) THEN
+                ALTER TYPE app_role ADD VALUE 'gerente';
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'supervisor' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'app_role')) THEN
+                ALTER TYPE app_role ADD VALUE 'supervisor';
+              END IF;
+            END \$\$;
+          "
+          echo "Migrations done."
+          ENDSSH
+
       - name: Build frontend + apply backend patches
         run: |
           ssh -i ~/.ssh/vps_key root@72.61.25.92 bash << 'ENDSSH'
