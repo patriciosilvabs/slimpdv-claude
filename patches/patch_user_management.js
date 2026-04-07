@@ -140,6 +140,7 @@ lines.push('');
 // Join with Unix line endings (LF only) to avoid CRLF issues
 const NEW_ROUTES = lines.join('\n') + '\n';
 
-code = code.replace(REALTIME_ANCHOR, NEW_ROUTES + REALTIME_ANCHOR);
+// IMPORTANT: Use function replacer to avoid $' and $& special replacement patterns
+code = code.replace(REALTIME_ANCHOR, function() { return NEW_ROUTES + REALTIME_ANCHOR; });
 fs.writeFileSync(OUTPUT, code);
 console.log('User management patch v5 applied — module:', looksLikeCJS ? 'CJS' : 'ESM');
