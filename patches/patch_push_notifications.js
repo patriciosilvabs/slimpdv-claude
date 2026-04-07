@@ -89,8 +89,31 @@ app.delete('/api/push/unsubscribe', authenticateToken, async function(req, res) 
   process.exit(0);
 }
 
+// ── EARLY MIDDLEWARE: inject right after "const app = express()" ─────────────
+// This middleware runs before any route and guarantees the VAPID endpoint
+// works even if other routes or middleware would otherwise intercept it.
+const ANCHOR_APP = 'const app = express();';
+const appIdx = code.indexOf(ANCHOR_APP);
+if (appIdx !== -1) {
+  const earlyMiddleware = `
+// PATCH: push_vapid_early — VAPID guard middleware (before all routes)
+app.use(function _vapidGuard(req, res, next) {
+  if (req.method === 'GET' && (req.path === '/api/push/vapid-public-key' || req.path === '/push/vapid-public-key')) {
+    return res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || null });
+  }
+  next();
+});
+`;
+  const insertAfterApp = appIdx + ANCHOR_APP.length;
+  code = code.slice(0, insertAfterApp) + earlyMiddleware + code.slice(insertAfterApp);
+  console.log('push_vapid_early: early middleware injected after app = express()');
+} else {
+  console.log('push_vapid_early: app = express() anchor not found, skipping early middleware');
+}
+
 // ── Find insertion anchor (after pool/app setup, before routes) ──────────────
 const ANCHOR_ROUTES = "app.get('/api/health'";
+// Re-scan code after possible early middleware insertion above
 const anchorIdx = code.indexOf(ANCHOR_ROUTES);
 if (anchorIdx === -1) {
   console.error('ERROR: health route anchor not found');

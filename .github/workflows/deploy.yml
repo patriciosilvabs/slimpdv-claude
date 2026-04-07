@@ -157,6 +157,16 @@ jobs:
           docker restart slimpdv-backend
           sleep 5
 
+          # ── NGINX: serve VAPID key directly (guarantees 200 regardless of backend) ──
+          echo "Setting up VAPID nginx config..."
+          printf 'location = /api/push/vapid-public-key {\n    add_header Content-Type "application/json";\n    return 200 '"'"'{"publicKey":"%s"}'"'"';\n}\nlocation = /push/vapid-public-key {\n    add_header Content-Type "application/json";\n    return 200 '"'"'{"publicKey":"%s"}'"'"';\n}\n' "$VAPID_PUB" "$VAPID_PUB" > /tmp/nginx_vapid.conf
+          cat /tmp/nginx_vapid.conf
+          docker cp /tmp/nginx_vapid.conf slimpdv-nginx-proxy:/etc/nginx/conf.d/90-vapid.conf 2>/dev/null && \
+            docker exec slimpdv-nginx-proxy nginx -t 2>&1 && \
+            docker exec slimpdv-nginx-proxy nginx -s reload && \
+            echo "VAPID nginx config loaded" || \
+            { echo "VAPID nginx config failed — removing"; docker exec slimpdv-nginx-proxy rm -f /etc/nginx/conf.d/90-vapid.conf 2>/dev/null || true; }
+
           # ── POST-RESTART DIAGNOSTICS ─────────────────────────────────────────────
           echo "=== Backend state immediately after restart ==="
           docker inspect slimpdv-backend --format 'Status: {{.State.Status}} | ExitCode: {{.State.ExitCode}} | Restarting: {{.State.Restarting}}' 2>/dev/null || true
