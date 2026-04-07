@@ -140,17 +140,20 @@ jobs:
           } catch(e) { console.log('[patch] package.json note:', e.message); }
           " 2>/dev/null || echo "package.json CJS update skipped"
 
+          echo "VPS host Node.js: $(node --version 2>/dev/null || echo unknown)"
+
           for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist patch_kds_tenant_name patch_kds_tenant_info patch_push_notifications; do
             echo "  -> $patch"
             node /tmp/${patch}.js || { echo "PATCH ERROR: $patch"; exit 1; }
           done
 
-          node --check /tmp/server_patched.js
+          # Syntax check using container Node.js 20 (host may be older)
+          echo "Syntax checking with container Node.js..."
+          docker cp /tmp/server_patched.js slimpdv-backend:/tmp/server_syntax_check.js
+          docker exec slimpdv-backend node --check /tmp/server_syntax_check.js && echo "Syntax OK" || { echo "SYNTAX ERROR in patched file"; exit 1; }
 
           # ── COPY patched server.js to ALL possible entry points ───────────────────
           echo "Installing patched server.js..."
-          # Always write to both locations so the server runs the patched code
-          # regardless of whether CMD is "node server.js" or "node dist/server.js"
           docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
           if docker exec slimpdv-backend test -d /app/dist 2>/dev/null; then
             docker cp /tmp/server_patched.js slimpdv-backend:/app/dist/server.js
@@ -159,12 +162,46 @@ jobs:
             echo "Patched server.js installed to /app/server.js only"
           fi
 
-          # Verify the patched file is in the container
+          # Verify the patched file is in the container before restart
           docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/server.js" || echo "WARN: push routes not found in /app/server.js"
           docker exec slimpdv-backend grep -c "push/vapid" /app/dist/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/dist/server.js" || true
 
           docker restart slimpdv-backend
           sleep 5
+
+          # ── FORCE-INJECT VAPID route as final guaranteed fallback ─────────────────
+          # Runs after restart to confirm or directly inject into whichever file node executes
+          VAPID_DIRECT=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/push/vapid-public-key)
+          echo "Direct VAPID test post-restart: HTTP $VAPID_DIRECT"
+          if [ "$VAPID_DIRECT" != "200" ]; then
+            echo "VAPID route missing post-restart — force-injecting directly into container..."
+            docker exec slimpdv-backend node -e "
+              const fs = require('fs');
+              const files = ['/app/dist/server.js', '/app/server.js'];
+              let fixed = false;
+              for (const f of files) {
+                try {
+                  let c = fs.readFileSync(f, 'utf8');
+                  if (c.includes('/api/push/vapid-public-key')) { console.log('Route present in', f); continue; }
+                  // Anchor: inject before app.listen or before last app.use
+                  let idx = c.indexOf('app.listen(');
+                  if (idx < 0) idx = c.lastIndexOf('app.use(');
+                  if (idx < 0) { console.log('No anchor found in', f); continue; }
+                  const route = '\n// FORCE_PUSH_INJECT\napp.get(\'/api/push/vapid-public-key\', function(req,res){ res.json({publicKey:process.env.VAPID_PUBLIC_KEY||null}); });\n';
+                  c = c.slice(0, idx) + route + c.slice(idx);
+                  fs.writeFileSync(f, c);
+                  console.log('Force-injected route into:', f);
+                  fixed = true;
+                } catch(e) { console.log('Skip', f, ':', e.message); }
+              }
+              if (fixed) process.exit(2);
+            " 2>&1; INJECT_EXIT=$?
+            if [ "$INJECT_EXIT" = "2" ]; then
+              echo "Re-restarting backend with injected route..."
+              docker restart slimpdv-backend
+              sleep 4
+            fi
+          fi
 
           # ── START FRONTEND ────────────────────────────────────────────────────────
           echo "Starting frontend..."
