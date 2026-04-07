@@ -7,6 +7,8 @@ export interface BusinessRulesConfig {
   discount_limit_waiter: number;      // max % for waiter role
   discount_limit_cashier: number;     // max % for cashier role
   discount_limit_manager: number;     // max % for admin role (above this needs password)
+  discount_limit_gerente: number;
+  discount_limit_supervisor: number;
   // Rule 8: Cancellation authorization
   require_auth_cancellation: boolean; // require manager approval for cancellations
   // Rule 9: Block edit after kitchen
@@ -47,6 +49,8 @@ const DEFAULT_RULES: BusinessRulesConfig = {
   discount_limit_waiter: 5,
   discount_limit_cashier: 15,
   discount_limit_manager: 100,
+  discount_limit_gerente: 30,
+  discount_limit_supervisor: 10,
   require_auth_cancellation: false,
   block_edit_after_kitchen: false,
   business_hours_enabled: false,
@@ -72,7 +76,7 @@ const DEFAULT_RULES: BusinessRulesConfig = {
 
 export function useBusinessRules() {
   const { getSetting, updateSetting, isLoading } = useGlobalSettings();
-  const { role, isAdmin } = useUserRole();
+  const { role, isAdmin, isGerente, isSupervisor } = useUserRole();
 
   const stored = getSetting('business_rules');
   const rules: BusinessRulesConfig = stored
@@ -92,6 +96,8 @@ export function useBusinessRules() {
   // Get the discount limit for the current user's role
   const getDiscountLimitForCurrentUser = (): number => {
     if (isAdmin) return rules.discount_limit_manager;
+    if (isGerente) return rules.discount_limit_gerente;
+    if (isSupervisor) return rules.discount_limit_supervisor;
     if (role === 'cashier') return rules.discount_limit_cashier;
     if (role === 'waiter') return rules.discount_limit_waiter;
     return rules.discount_limit_manager; // default for unknown roles

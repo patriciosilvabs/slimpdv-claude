@@ -127,6 +127,24 @@ export function BusinessRulesSettings() {
                 max={100}
               />
               <RuleNumber
+                label="Limite para Supervisor (%)"
+                description="Percentual máximo de desconto sem aprovação"
+                value={rules.discount_limit_supervisor ?? 10}
+                onChange={(v) => updateRule('discount_limit_supervisor', v)}
+                min={0}
+                max={100}
+                disabled={!rules.discount_limit_enabled}
+              />
+              <RuleNumber
+                label="Limite para Gerente (%)"
+                description="Percentual máximo de desconto sem aprovação"
+                value={rules.discount_limit_gerente ?? 30}
+                onChange={(v) => updateRule('discount_limit_gerente', v)}
+                min={0}
+                max={100}
+                disabled={!rules.discount_limit_enabled}
+              />
+              <RuleNumber
                 label="Limite para Admin/Gerente"
                 description="Acima deste valor, mesmo o gerente precisa de senha mestre"
                 value={rules.discount_limit_manager}

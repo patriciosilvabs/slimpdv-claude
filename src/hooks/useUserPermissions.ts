@@ -86,7 +86,12 @@ export type PermissionCode =
   // Production
   | 'production_view'
   | 'production_manage'
-  | 'targets_manage';
+  | 'targets_manage'
+  // Approvals
+  | 'approve_discount'
+  | 'approve_cancellation'
+  | 'approve_cash_reopen'
+  | 'approve_custom';
 
 export interface UserPermission {
   id: string;
@@ -247,6 +252,15 @@ export const PERMISSION_GROUPS = {
       { code: 'production_view' as PermissionCode, label: 'Acessar dashboard de produção' },
       { code: 'production_manage' as PermissionCode, label: 'Confirmar envios de produção' },
       { code: 'targets_manage' as PermissionCode, label: 'Gerenciar metas de produção' },
+    ],
+  },
+  approvals: {
+    label: 'Aprovações e Autorizações',
+    permissions: [
+      { code: 'approve_discount' as PermissionCode, label: 'Aprovar descontos acima do limite' },
+      { code: 'approve_cancellation' as PermissionCode, label: 'Aprovar cancelamentos de pedido/item' },
+      { code: 'approve_cash_reopen' as PermissionCode, label: 'Aprovar reabertura de caixa' },
+      { code: 'approve_custom' as PermissionCode, label: 'Aprovar solicitações personalizadas' },
     ],
   },
 };

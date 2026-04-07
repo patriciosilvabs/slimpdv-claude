@@ -16,6 +16,8 @@ const roleLabels: Record<AppRole, string> = {
   waiter: 'Garçom',
   kitchen: 'Cozinha',
   kds: 'KDS',
+  gerente: 'Gerente',
+  supervisor: 'Supervisor',
 };
 
 const roleColors: Record<AppRole, string> = {
@@ -24,6 +26,8 @@ const roleColors: Record<AppRole, string> = {
   waiter: 'bg-info text-info-foreground',
   kitchen: 'bg-warning text-warning-foreground',
   kds: 'bg-orange-500 text-white',
+  gerente: 'bg-purple-600 text-white',
+  supervisor: 'bg-indigo-500 text-white',
 };
 
 export function RolesSettings() {
@@ -123,6 +127,18 @@ export function RolesSettings() {
               <Badge className={roleColors.kds}>KDS</Badge>
               <p className="text-sm text-muted-foreground mt-2">
                 Acesso exclusivo à tela KDS para visualizar e atualizar status dos pedidos.
+              </p>
+            </div>
+            <div className="p-4 border rounded-lg">
+              <Badge className={roleColors.gerente}>Gerente</Badge>
+              <p className="text-sm text-muted-foreground mt-2">
+                Aprova solicitações de alto valor, cancela pedidos e supervisiona operações. Define limites por turno.
+              </p>
+            </div>
+            <div className="p-4 border rounded-lg">
+              <Badge className={roleColors.supervisor}>Supervisor</Badge>
+              <p className="text-sm text-muted-foreground mt-2">
+                Aprova solicitações do dia a dia (descontos, cancelamentos). Hierarquia abaixo do Gerente.
               </p>
             </div>
           </div>

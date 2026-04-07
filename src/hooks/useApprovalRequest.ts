@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTenant } from '@/hooks/useTenant';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useUserPermissions } from '@/hooks/useUserPermissions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -80,17 +81,31 @@ export function useRequestApproval() {
 // Hook for the MANAGER side (approver)
 export function usePendingApprovals() {
   const { tenantId } = useTenant();
-  const { isAdmin, role } = useUserRole();
+  const { isAdmin, isGerente, isSupervisor } = useUserRole();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { hasPermission } = useUserPermissions();
 
-  const canApprove = isAdmin || role === 'cashier';
+  // Admin can approve anything; others need specific permission
+  const canApproveDiscount = isAdmin || hasPermission('approve_discount');
+  const canApproveCancellation = isAdmin || hasPermission('approve_cancellation');
+  const canApproveCashReopen = isAdmin || hasPermission('approve_cash_reopen');
+  const canApproveCustom = isAdmin || hasPermission('approve_custom');
+  const canApprove = canApproveDiscount || canApproveCancellation || canApproveCashReopen || canApproveCustom;
+
+  // Map rule_type to what this user can approve
+  const canApproveRuleType = (ruleType: string) => {
+    if (isAdmin) return true;
+    if (ruleType === 'discount') return canApproveDiscount;
+    if (ruleType === 'cancellation') return canApproveCancellation;
+    if (ruleType === 'cash_reopen') return canApproveCashReopen;
+    return canApproveCustom;
+  };
 
   const { data: pendingRequests = [] } = useQuery({
     queryKey: ['approval-requests-pending', tenantId],
     queryFn: async () => {
       if (!tenantId || !canApprove) return [];
-      // Only fetch requests created in the last 30 minutes to avoid showing stale ones
       const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const { data, error } = await (supabase as any)
         .from('approval_requests')
@@ -100,7 +115,9 @@ export function usePendingApprovals() {
         .gte('created_at', since)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return (data || []) as ApprovalRequest[];
+      // Filter to only show requests this user can actually approve
+      const all = (data || []) as ApprovalRequest[];
+      return all.filter(r => canApproveRuleType(r.rule_type));
     },
     enabled: !!tenantId && canApprove,
     refetchInterval: 3000, // poll every 3 seconds
@@ -148,6 +165,11 @@ export function usePendingApprovals() {
   return {
     pendingRequests,
     canApprove,
+    canApproveDiscount,
+    canApproveCancellation,
+    canApproveCashReopen,
+    canApproveCustom,
+    canApproveRuleType,
     approveRequest,
     denyRequest,
   };

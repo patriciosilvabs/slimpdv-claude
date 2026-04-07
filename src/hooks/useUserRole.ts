@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTenant } from '@/hooks/useTenant';
 
-export type AppRole = 'admin' | 'cashier' | 'waiter' | 'kitchen' | 'kds';
+export type AppRole = 'admin' | 'cashier' | 'waiter' | 'kitchen' | 'kds' | 'gerente' | 'supervisor';
 
 export interface UserRole {
   id: string;
@@ -49,6 +49,8 @@ export function useUserRole() {
     isWaiter: roles.includes('waiter'),
     isKitchen: roles.includes('kitchen'),
     isKds: roles.includes('kds'),
+    isGerente: roles.includes('gerente'),
+    isSupervisor: roles.includes('supervisor'),
     hasRole: (role: AppRole) => roles.includes(role),
     hasAnyRole: (allowedRoles: AppRole[]) => allowedRoles.some(r => roles.includes(r)),
   };
