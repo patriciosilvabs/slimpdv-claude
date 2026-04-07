@@ -5,11 +5,14 @@ import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Slider } from '@/components/ui/slider';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useKdsSettings, KdsOperationMode, OrderManagementViewMode, KanbanColumn } from '@/hooks/useKdsSettings';
 import { useKdsStations } from '@/hooks/useKdsStations';
 import { useKdsDevice } from '@/hooks/useKdsDevice';
-import { ChefHat, Printer, Monitor, Factory, Clock, Circle, X, Plus, AlertTriangle, ChevronDown, Layers, User, Eye, Palette, ClipboardList, CheckCircle, Package, Columns, Moon } from 'lucide-react';
+import { useAudioNotification } from '@/hooks/useAudioNotification';
+import { SoundSelector } from '@/components/SoundSelector';
+import { ChefHat, Printer, Monitor, Factory, Clock, Circle, X, Plus, AlertTriangle, ChevronDown, Layers, User, Eye, Palette, ClipboardList, CheckCircle, Package, Columns, Moon, Bell, Play, Volume2, Store, Ban, Hourglass } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { BADGE_COLOR_OPTIONS, getBadgeColorClasses } from '@/lib/badgeColors';
@@ -18,6 +21,7 @@ export function KdsSettingsSection() {
   const { settings, updateSettings, updateDeviceSettings, updateBottleneckSettings, updateStationOverride, isLoading } = useKdsSettings();
   const { activeStations } = useKdsStations();
   const { device, assignToStation, renameDevice } = useKdsDevice();
+  const { settings: audioSettings, updateSettings: updateAudioSettings, toggleSound, setSelectedSound, testSound } = useAudioNotification();
   const [newKeyword, setNewKeyword] = useState('');
   const [expandedStations, setExpandedStations] = useState<Set<string>>(new Set());
 
@@ -1169,14 +1173,83 @@ export function KdsSettingsSection() {
                   Quando ativado, imprime automaticamente um comprovante de cancelamento.
                 </p>
               </div>
-              <Switch 
+              <Switch
                 checked={settings.autoPrintCancellations ?? true}
-                onCheckedChange={(autoPrintCancellations) => 
+                onCheckedChange={(autoPrintCancellations) =>
                   updateSettings({ autoPrintCancellations })
                 }
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* KDS Sounds Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Bell className="h-5 w-5" />
+            Sons do KDS
+          </CardTitle>
+          <CardDescription>
+            Sons de alerta específicos para a tela da cozinha
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Volume2 className="h-4 w-4 text-muted-foreground" />
+              <Label>Volume geral: {Math.round(audioSettings.volume * 100)}%</Label>
+            </div>
+            <Switch
+              checked={audioSettings.enabled}
+              onCheckedChange={(enabled) => updateAudioSettings({ enabled })}
+            />
+          </div>
+          <Slider
+            value={[audioSettings.volume * 100]}
+            onValueChange={([value]) => updateAudioSettings({ volume: value / 100 })}
+            max={100} step={5}
+            disabled={!audioSettings.enabled}
+            className="mb-4"
+          />
+          {[
+            { type: 'kdsNewOrder' as const, icon: Store, iconColor: 'text-orange-500', label: 'Novo Pedido (KDS)', description: 'Som específico para a tela da cozinha' },
+            { type: 'orderCancelled' as const, icon: Ban, iconColor: 'text-destructive', label: 'Pedido Cancelado', description: 'Alerta quando um pedido é cancelado' },
+            { type: 'maxWaitAlert' as const, icon: AlertTriangle, iconColor: 'text-red-500', label: 'Alerta de Tempo Máximo', description: 'Som quando pedido excede 25min no KDS' },
+            { type: 'itemDelayAlert' as const, icon: Hourglass, iconColor: 'text-red-600', label: 'Alerta de Item Atrasado', description: 'Som quando item fica muito tempo na estação' },
+          ].map(event => {
+            const Icon = event.icon;
+            return (
+              <div key={event.type} className="flex items-center justify-between p-3 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-md bg-muted">
+                    <Icon className={`h-4 w-4 ${event.iconColor}`} />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">{event.label}</p>
+                    <p className="text-xs text-muted-foreground">{event.description}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <SoundSelector
+                    soundType={event.type}
+                    selectedSound={audioSettings.selectedSounds[event.type]}
+                    onSelect={(soundId, soundUrl) => setSelectedSound(event.type, soundId, soundUrl)}
+                    disabled={!audioSettings.enabled}
+                  />
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => testSound(event.type)} disabled={!audioSettings.enabled}>
+                    <Play className="h-4 w-4" />
+                  </Button>
+                  <Switch
+                    checked={audioSettings.enabledSounds[event.type]}
+                    onCheckedChange={() => toggleSound(event.type)}
+                    disabled={!audioSettings.enabled}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
     </div>

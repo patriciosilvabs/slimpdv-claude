@@ -2,10 +2,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { useOrderSettings } from '@/hooks/useOrderSettings';
 import { useCardapioWebIntegration } from '@/hooks/useCardapioWebIntegration';
 import { useOrderWebhooks } from '@/hooks/useOrderWebhooks';
-import { Zap, Printer, Truck, Monitor, PackageCheck, Loader2, Info } from 'lucide-react';
+import { useOrderSettings } from '@/hooks/useOrderSettings';
+import { Zap, Truck, Monitor, Loader2, Info, Plug } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface AutomationToggleProps {
@@ -29,15 +29,7 @@ function AutomationToggle({ label, description, checked, onCheckedChange, disabl
 }
 
 export function AutomationSettings() {
-  const {
-    autoAccept,
-    autoPrintKitchenTicket,
-    autoPrintCustomerReceipt,
-    toggleAutoAccept,
-    toggleAutoPrintKitchenTicket,
-    toggleAutoPrintCustomerReceipt,
-    isLoading: printLoading,
-  } = useOrderSettings();
+  const { autoAccept } = useOrderSettings();
 
   const {
     integration,
@@ -51,7 +43,7 @@ export function AutomationSettings() {
     updateWebhook,
   } = useOrderWebhooks();
 
-  const isLoading = printLoading || integrationLoading || webhooksLoading;
+  const isLoading = integrationLoading || webhooksLoading;
 
   const autoPrint = integration?.auto_print ?? true;
   const autoKds = integration?.auto_kds ?? true;
@@ -60,14 +52,14 @@ export function AutomationSettings() {
   const activeWebhooks = webhooks.filter(w => w.is_active);
   const anyAutoSend = activeWebhooks.some((w: any) => w.auto_send);
 
-  const handleIntegrationToggle = (field: 'auto_accept' | 'auto_print' | 'auto_kds', value: boolean) => {
+  const handleIntegrationToggle = (field: 'auto_print' | 'auto_kds', value: boolean) => {
     if (!integration) return;
     saveIntegration.mutate({
       api_token: integration.api_token,
       store_id: integration.store_id || undefined,
       webhook_secret: integration.webhook_secret || undefined,
       is_active: integration.is_active ?? true,
-      auto_accept: field === 'auto_accept' ? value : autoAccept,
+      auto_accept: autoAccept,
       auto_print: field === 'auto_print' ? value : autoPrint,
       auto_kds: field === 'auto_kds' ? value : autoKds,
     });
@@ -89,64 +81,55 @@ export function AutomationSettings() {
 
   return (
     <div className="space-y-6">
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          <strong>Aceite automático</strong> e <strong>impressão automática</strong> foram movidos para
+          {' '}<strong>Pedidos</strong>. Sons de alerta estão em cada seção correspondente (Mesas, KDS, Pedidos).
+        </AlertDescription>
+      </Alert>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-primary" />
-            Automação de Pedidos
+            <Plug className="h-5 w-5 text-primary" />
+            Integrações Externas
           </CardTitle>
           <CardDescription>
-            Configure o que acontece automaticamente quando um pedido chega ao sistema
+            Automação específica para pedidos recebidos via CardápioWeb e Delivery Pay
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-1">
-          {/* Aceite automático */}
+          {/* CardápioWeb */}
           <div>
             <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground mb-1">
-              <PackageCheck className="h-4 w-4" />
-              Quando o pedido chega
+              <Monitor className="h-4 w-4" />
+              CardápioWeb / iFood
             </h3>
             <AutomationToggle
-              label="Aceitar automaticamente"
-              description="Pedidos entram direto em preparo sem precisar confirmar manualmente"
-              checked={autoAccept}
-              onCheckedChange={toggleAutoAccept}
-            />
-          </div>
-
-          <Separator />
-
-          {/* Impressão */}
-          <div>
-            <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground mb-1 pt-2">
-              <Printer className="h-4 w-4" />
-              Impressão
-            </h3>
-            <AutomationToggle
-              label="Comanda da cozinha"
-              description="Imprime automaticamente a comanda para a cozinha"
-              checked={autoPrintKitchenTicket}
-              onCheckedChange={toggleAutoPrintKitchenTicket}
+              label="Impressão via integração"
+              description="Imprime automaticamente pedidos recebidos por integração"
+              checked={autoPrint}
+              onCheckedChange={(v) => handleIntegrationToggle('auto_print', v)}
+              disabled={!hasIntegration}
             />
             <AutomationToggle
-              label="Recibo do cliente"
-              description="Imprime automaticamente o recibo no caixa"
-              checked={autoPrintCustomerReceipt}
-              onCheckedChange={toggleAutoPrintCustomerReceipt}
+              label="Enviar ao KDS automaticamente"
+              description="O pedido aparece no painel da cozinha sem intervenção manual"
+              checked={autoKds}
+              onCheckedChange={(v) => handleIntegrationToggle('auto_kds', v)}
+              disabled={!hasIntegration}
             />
-            {hasIntegration && (
-              <AutomationToggle
-                label="Impressão via integração"
-                description="Imprime automaticamente pedidos recebidos por integração"
-                checked={autoPrint}
-                onCheckedChange={(v) => handleIntegrationToggle('auto_print', v)}
-              />
+            {!hasIntegration && (
+              <p className="text-xs text-muted-foreground italic ml-1">
+                Configure a integração CardápioWeb primeiro para ativar
+              </p>
             )}
           </div>
 
           <Separator />
 
-          {/* Envio delivery */}
+          {/* Delivery */}
           <div>
             <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground mb-1 pt-2">
               <Truck className="h-4 w-4" />
@@ -165,38 +148,8 @@ export function AutomationSettings() {
               </p>
             )}
           </div>
-
-          <Separator />
-
-          {/* KDS */}
-          <div>
-            <h3 className="text-sm font-semibold flex items-center gap-2 text-foreground mb-1 pt-2">
-              <Monitor className="h-4 w-4" />
-              KDS (Painel da Cozinha)
-            </h3>
-            <AutomationToggle
-              label="Enviar ao KDS automaticamente"
-              description="O pedido aparece no painel da cozinha sem intervenção manual"
-              checked={autoKds}
-              onCheckedChange={(v) => handleIntegrationToggle('auto_kds', v)}
-              disabled={!hasIntegration}
-            />
-            {!hasIntegration && (
-              <p className="text-xs text-muted-foreground italic ml-1 -mt-1">
-                Configure a integração CardápioWeb primeiro para ativar
-              </p>
-            )}
-          </div>
         </CardContent>
       </Card>
-
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          Estas configurações valem para <strong>todos</strong> os pedidos: mesa, balcão, delivery, CardápioWeb e iFood.
-          As mesmas opções continuam disponíveis nas páginas individuais (Impressoras, Integrações, Webhooks).
-        </AlertDescription>
-      </Alert>
     </div>
   );
 }
