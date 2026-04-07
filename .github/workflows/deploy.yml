@@ -226,8 +226,12 @@ jobs:
           # every container start. By injecting a minimal VAPID guard into the template file
           # itself, the guard is present even when the entrypoint rebuilds server.js.
           echo "=== Injecting vapidGuard into server_original.js ==="
-          ORIG_HAS_GUARD=$(docker exec slimpdv-backend grep -c "_vapidGuard" /app/server_original.js 2>/dev/null || echo 0)
-          echo "server_original.js vapidGuard count: $ORIG_HAS_GUARD"
+          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then
+            ORIG_HAS_GUARD=1
+          else
+            ORIG_HAS_GUARD=0
+          fi
+          echo "server_original.js has vapidGuard: $ORIG_HAS_GUARD"
           if [ "$ORIG_HAS_GUARD" = "0" ]; then
             docker exec slimpdv-backend node -e "
               const fs = require('fs');
@@ -267,7 +271,11 @@ jobs:
           # ── CRITICAL: check server.js state AFTER restart ─────────────────────────
           echo "=== server.js state AFTER docker restart ==="
           POST_SIZE=$(docker exec slimpdv-backend wc -c < /app/server.js 2>/dev/null || echo 0)
-          POST_PUSH=$(docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null || echo 0)
+          if docker exec slimpdv-backend grep -q "push/vapid" /app/server.js 2>/dev/null; then
+            POST_PUSH=1
+          else
+            POST_PUSH=0
+          fi
           echo "server.js size after restart: $POST_SIZE bytes"
           echo "push/vapid occurrences after restart: $POST_PUSH"
           echo "server.js first 3 lines after restart:"
@@ -348,8 +356,8 @@ jobs:
 
           # ── Write deploy diagnostic to frontend static dir (accessible via HTTP) ──
           DIAG_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          DIAG_ORIG_GUARD=$(docker exec slimpdv-backend grep -c "_vapidGuard" /app/server_original.js 2>/dev/null || echo "err")
-          DIAG_POST_PUSH=$(docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null || echo "err")
+          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then DIAG_ORIG_GUARD=1; else DIAG_ORIG_GUARD=0; fi
+          if docker exec slimpdv-backend grep -q "push/vapid" /app/server.js 2>/dev/null; then DIAG_POST_PUSH=1; else DIAG_POST_PUSH=0; fi
           printf '{"ts":"%s","vapid_http":"%s","vapid_body":%s,"post_push_count":"%s","orig_guard_count":"%s","server_size":"%s"}\n' \
             "$DIAG_TS" "$VAPID_DIRECT" "$(echo $VAPID_BODY | head -c 300)" "$DIAG_POST_PUSH" "$DIAG_ORIG_GUARD" "$POST_SIZE" \
             > /tmp/vapid-diag.json 2>/dev/null || true
