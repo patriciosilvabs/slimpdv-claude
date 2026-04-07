@@ -265,8 +265,20 @@ jobs:
             echo "vapidGuard already present in server_original.js — skipping injection"
           fi
 
+          # ── Show BEFORE-restart guard state ──────────────────────────────────────
+          echo "=== server_original.js BEFORE restart ==="
+          docker exec slimpdv-backend head -5 /app/server_original.js 2>/dev/null || echo "(cannot read server_original.js)"
+          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then
+            echo "BEFORE-restart: vapidGuard IS in server_original.js"
+            PRE_GUARD=1
+          else
+            echo "BEFORE-restart: vapidGuard NOT in server_original.js"
+            PRE_GUARD=0
+          fi
+
           docker restart slimpdv-backend
-          sleep 6
+          # Wait up to 20s for container to be healthy
+          for i in 1 2 3 4; do sleep 5; docker exec slimpdv-backend node -e "process.exit(0)" 2>/dev/null && break || echo "Container not ready yet (attempt $i)..."; done
 
           # ── CRITICAL: check server.js state AFTER restart ─────────────────────────
           echo "=== server.js state AFTER docker restart ==="
@@ -280,6 +292,12 @@ jobs:
           echo "push/vapid occurrences after restart: $POST_PUSH"
           echo "server.js first 3 lines after restart:"
           docker exec slimpdv-backend head -3 /app/server.js 2>/dev/null || true
+          # Show server_original.js state AFTER restart to check if entrypoint overwrites it
+          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then
+            echo "AFTER-restart: vapidGuard IS in server_original.js"
+          else
+            echo "AFTER-restart: vapidGuard NOT in server_original.js"
+          fi
           if [ "$POST_PUSH" = "0" ]; then
             echo "CONFIRMED: entrypoint rebuilt server.js and erased push routes after restart"
             echo "server_original.js content (first 30 lines):"
@@ -358,8 +376,17 @@ jobs:
           DIAG_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then DIAG_ORIG_GUARD=1; else DIAG_ORIG_GUARD=0; fi
           if docker exec slimpdv-backend grep -q "push/vapid" /app/server.js 2>/dev/null; then DIAG_POST_PUSH=1; else DIAG_POST_PUSH=0; fi
-          printf '{"ts":"%s","vapid_http":"%s","vapid_body":%s,"post_push_count":"%s","orig_guard_count":"%s","server_size":"%s"}\n' \
-            "$DIAG_TS" "$VAPID_DIRECT" "$(echo $VAPID_BODY | head -c 300)" "$DIAG_POST_PUSH" "$DIAG_ORIG_GUARD" "$POST_SIZE" \
+          DIAG_CTR_STATE=$(docker inspect slimpdv-backend --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+          DIAG_CMD=$(docker inspect slimpdv-backend --format '{{json .Config.Cmd}}' 2>/dev/null || echo "unknown")
+          DIAG_EP=$(docker inspect slimpdv-backend --format '{{json .Config.Entrypoint}}' 2>/dev/null || echo "unknown")
+          DIAG_ORIG_FIRST=$(docker exec slimpdv-backend head -1 /app/server_original.js 2>/dev/null || echo "unreadable")
+          DIAG_SERVER_FIRST=$(docker exec slimpdv-backend head -1 /app/server.js 2>/dev/null || echo "unreadable")
+          printf '{"ts":"%s","vapid_http":"%s","vapid_body":%s,"post_push":"%s","orig_guard":"%s","server_size":"%s","pre_guard":"%s","container":"%s","cmd":%s,"entrypoint":%s,"orig_first":%s,"server_first":%s}\n' \
+            "$DIAG_TS" "$VAPID_DIRECT" "$(echo "$VAPID_BODY" | head -c 200 | sed 's/"/\\"/g')" \
+            "$DIAG_POST_PUSH" "$DIAG_ORIG_GUARD" "$POST_SIZE" "$PRE_GUARD" "$DIAG_CTR_STATE" \
+            "$DIAG_CMD" "$DIAG_EP" \
+            "$(echo "$DIAG_ORIG_FIRST" | head -c 100 | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read().rstrip()))' 2>/dev/null || echo '"?"')" \
+            "$(echo "$DIAG_SERVER_FIRST" | head -c 100 | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read().rstrip()))' 2>/dev/null || echo '"?"')" \
             > /tmp/vapid-diag.json 2>/dev/null || true
           docker cp /tmp/vapid-diag.json slimpdv-frontend:/app/dist/vapid-diag.json 2>/dev/null && \
             echo "Diagnostic written to /app/dist/vapid-diag.json (accessible at /vapid-diag.json)" || \
