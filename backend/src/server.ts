@@ -27,6 +27,19 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Backward compat health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'api ok', timestamp: new Date().toISOString() });
+});
+
+// VAPID public key endpoint (Web Push notifications)
+const vapidHandler = (req: express.Request, res: express.Response) => {
+  const key = process.env.VAPID_PUBLIC_KEY || null;
+  res.json({ publicKey: key });
+};
+app.get('/push/vapid-public-key', vapidHandler);
+app.get('/api/push/vapid-public-key', vapidHandler);
+
 // API Routes
 app.use('/auth', authRoutes);
 app.use('/api/kds', kdsRoutes);
