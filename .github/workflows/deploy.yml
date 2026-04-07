@@ -37,7 +37,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H 72.61.25.92 >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H 72.61.25.92 >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Upload files to VPS
         run: |
