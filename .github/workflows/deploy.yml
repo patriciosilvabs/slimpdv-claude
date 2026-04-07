@@ -79,6 +79,19 @@ jobs:
 
           cp patches/patch_*.js /tmp/
 
+          # ── SAVE current server.js to host BEFORE any container recreation ──────────
+          # This preserves the large assembled server.js that the entrypoint builds at
+          # startup. Container recreation discards the writable layer, losing this file.
+          echo "=== Saving current server.js to host for persistence ==="
+          CURRENT_SIZE=$(docker exec slimpdv-backend wc -c < /app/server.js 2>/dev/null || echo 0)
+          echo "Current /app/server.js size: $CURRENT_SIZE bytes"
+          if [ "$CURRENT_SIZE" -gt 50000 ]; then
+            docker cp slimpdv-backend:/app/server.js /var/www/slimpdv/server_base.js
+            echo "Saved large server.js ($CURRENT_SIZE bytes) → /var/www/slimpdv/server_base.js"
+          else
+            echo "server.js is small ($CURRENT_SIZE bytes) — not saving (may not have assembled yet)"
+          fi
+
           # ── GENERATE VAPID KEYS (before any container ops) ───────────────────────
           if [ ! -f /var/www/slimpdv/vapid-keys.json ]; then
             node -e 'try{const c=require("crypto");const{privateKey:pk,publicKey:pub}=c.generateKeyPairSync("ec",{namedCurve:"prime256v1"});const pd=pub.export({type:"spki",format:"der"});const rd=pk.export({type:"pkcs8",format:"der"});const b=x=>Buffer.from(x).toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");process.stdout.write(JSON.stringify({publicKey:b(pd.slice(27)),privateKey:b(rd.slice(-32))}))}catch(e){process.stdout.write(JSON.stringify({publicKey:"",privateKey:""}))}' > /var/www/slimpdv/vapid-keys.json
@@ -111,18 +124,37 @@ jobs:
           docker exec slimpdv-backend ls /app/ 2>/dev/null | head -30 || true
           docker exec slimpdv-backend ls /app/dist/ 2>/dev/null && echo "(dist/ exists)" || echo "(no dist/ dir)"
 
-          # Use server_original.js as the patch source if it exists.
-          # The docker-entrypoint.sh does: cp server_original.js server.js on every start,
-          # which overwrites any patches applied only to server.js.
-          # By patching server_original.js we survive container restarts.
-          if docker exec slimpdv-backend test -f /app/server_original.js 2>/dev/null; then
-            echo "Source: /app/server_original.js (entrypoint source — patches persist through restart)"
-            docker cp slimpdv-backend:/app/server_original.js /tmp/server_current.js
+          # ── Show entrypoint script so we know what rebuilds server.js ───────────────
+          echo "=== docker-entrypoint.sh content ==="
+          ENTRYPOINT_PATH=$(docker exec slimpdv-backend sh -c "which docker-entrypoint.sh 2>/dev/null || find /usr/local/bin /docker-entrypoint.sh / -name docker-entrypoint.sh -maxdepth 4 2>/dev/null | head -1" 2>/dev/null || echo "")
+          if [ -n "$ENTRYPOINT_PATH" ]; then
+            docker exec slimpdv-backend cat "$ENTRYPOINT_PATH" 2>/dev/null || true
           else
-            echo "Source: /app/server.js (no server_original.js found)"
+            echo "(entrypoint script not found at known paths)"
+            docker exec slimpdv-backend sh -c "find / -name docker-entrypoint.sh -maxdepth 5 2>/dev/null | head -3" 2>/dev/null || true
+          fi
+          echo "=== /app/server_original.js first 30 lines ==="
+          docker exec slimpdv-backend head -30 /app/server_original.js 2>/dev/null || true
+          echo "=== /app/src/ contents ==="
+          docker exec slimpdv-backend ls /app/src/ 2>/dev/null || true
+
+          # ── Select source for patching ────────────────────────────────────────────
+          # Priority: 1) /var/www/slimpdv/server_base.js (host-persisted large file)
+          #           2) /app/server.js (large assembled file in running container)
+          #           3) /app/server_original.js (fallback — likely small template)
+          rm -f /tmp/server_patched.js
+          BASE_SIZE=$(wc -c < /var/www/slimpdv/server_base.js 2>/dev/null || echo 0)
+          SERVER_SIZE=$(docker exec slimpdv-backend wc -c < /app/server.js 2>/dev/null || echo 0)
+          if [ "$BASE_SIZE" -gt 50000 ]; then
+            echo "Source: /var/www/slimpdv/server_base.js (host-persisted, $BASE_SIZE bytes)"
+            cp /var/www/slimpdv/server_base.js /tmp/server_current.js
+          elif [ "$SERVER_SIZE" -gt 50000 ]; then
+            echo "Source: /app/server.js (container, $SERVER_SIZE bytes)"
+            docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
+          else
+            echo "WARN: No large server.js found (base=$BASE_SIZE, container=$SERVER_SIZE) — using container server.js"
             docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
           fi
-          rm -f /tmp/server_patched.js
 
           # Check that the source has the expected patch anchors
           echo "Source file size: $(wc -c < /tmp/server_current.js) bytes"
@@ -149,17 +181,34 @@ jobs:
           # ── COPY patched server.js to ALL possible entry points ───────────────────
           echo "Installing patched server.js..."
           docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
-          # CRITICAL: also overwrite server_original.js so the entrypoint does not
-          # revert our patches when the container restarts (entrypoint: cp server_original.js server.js)
+          # Also overwrite server_original.js — if entrypoint uses it as a template,
+          # having the patched version there prevents route loss on restart.
           if docker exec slimpdv-backend test -f /app/server_original.js 2>/dev/null; then
             docker cp /tmp/server_patched.js slimpdv-backend:/app/server_original.js
-            echo "Patched server.js installed to /app/server.js AND /app/server_original.js"
+            echo "Patched installed to /app/server.js AND /app/server_original.js"
           else
-            echo "Patched server.js installed to /app/server.js only (no server_original.js)"
+            echo "Patched installed to /app/server.js only (no server_original.js)"
           fi
           if docker exec slimpdv-backend test -d /app/dist 2>/dev/null; then
             docker cp /tmp/server_patched.js slimpdv-backend:/app/dist/server.js
             echo "Also installed to /app/dist/server.js"
+          fi
+          # Save patched result to host for next deploy (survives container recreation)
+          cp /tmp/server_patched.js /var/www/slimpdv/server_base.js
+          echo "Saved patched server.js to /var/www/slimpdv/server_base.js for next deploy"
+
+          # ── Neutralize entrypoint if it rebuilds server.js ────────────────────────
+          # If docker-entrypoint.sh copies or assembles server.js at startup, our patches
+          # will be lost on docker restart. Replace it with a passthrough if it rebuilds.
+          if [ -n "$ENTRYPOINT_PATH" ]; then
+            REBUILDS=$(docker exec slimpdv-backend grep -cE "server_original|cp.*server\.js|cat.*src.*server" "$ENTRYPOINT_PATH" 2>/dev/null || echo "0")
+            if [ "$REBUILDS" -gt "0" ]; then
+              echo "Entrypoint rebuilds server.js ($REBUILDS matches) — replacing with passthrough"
+              docker exec slimpdv-backend sh -c "printf '#!/bin/sh\nexec \"\$@\"\n' > $ENTRYPOINT_PATH && chmod +x $ENTRYPOINT_PATH"
+              echo "Entrypoint neutralized: will now pass through to CMD directly"
+            else
+              echo "Entrypoint does not rebuild server.js — leaving unchanged"
+            fi
           fi
 
           # Verify the patched file is in the container before restart
