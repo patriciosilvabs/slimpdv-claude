@@ -157,7 +157,18 @@ jobs:
           docker restart slimpdv-backend
           sleep 5
 
-          # ── VERIFY VAPID route post-restart ──────────────────────────────────────
+          # ── POST-RESTART DIAGNOSTICS ─────────────────────────────────────────────
+          echo "=== Backend state immediately after restart ==="
+          docker inspect slimpdv-backend --format 'Status: {{.State.Status}} | ExitCode: {{.State.ExitCode}} | Restarting: {{.State.Restarting}}' 2>/dev/null || true
+          echo "--- Backend logs (last 30 lines) ---"
+          docker logs slimpdv-backend --tail 30 2>&1 || true
+          echo "--- Route order in patched server (first app.get/post/use lines) ---"
+          grep -n "app\.\(get\|post\|use\|delete\)\b" /tmp/server_patched.js 2>/dev/null | head -25 || true
+          echo "--- Push/vapid lines specifically ---"
+          grep -n "push\|vapid\|VAPID" /tmp/server_patched.js 2>/dev/null | head -20 || true
+          echo "--- Direct curl with response body ---"
+          curl -s "http://localhost:5000/api/push/vapid-public-key" 2>/dev/null || echo "(no response)"
+          curl -s "http://localhost:5000/api/health" 2>/dev/null || echo "(health also unreachable)"
           VAPID_DIRECT=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/push/vapid-public-key 2>/dev/null || echo "000")
           echo "Direct VAPID test post-restart: HTTP $VAPID_DIRECT"
 
