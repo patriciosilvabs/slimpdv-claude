@@ -138,6 +138,22 @@ jobs:
             sleep 3
           fi
 
+          # === DIAGNOSTICS ===
+          echo "=== Nginx proxy config ==="
+          docker exec slimpdv-nginx-proxy cat /etc/nginx/nginx.conf 2>/dev/null | head -20 || true
+          docker exec slimpdv-nginx-proxy ls /etc/nginx/conf.d/ 2>/dev/null || true
+          docker exec slimpdv-nginx-proxy cat /etc/nginx/conf.d/default.conf 2>/dev/null || true
+
+          echo "=== Direct backend test (internal port 5000) ==="
+          curl -s -o /dev/null -w "GET /push/vapid-public-key direct: HTTP %{http_code}\n" http://localhost:5000/push/vapid-public-key || true
+          curl -s -o /dev/null -w "GET /api/push/vapid-public-key direct: HTTP %{http_code}\n" http://localhost:5000/api/push/vapid-public-key || true
+          curl -s "http://localhost:5000/push/vapid-public-key" 2>/dev/null || true
+
+          echo "=== Push routes in patched server ==="
+          grep -n "push/\|vapid" /tmp/server_patched.js 2>/dev/null || true
+
+          # === END DIAGNOSTICS ===
+
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://pdvslim.com.br/api/functions/cardapioweb-webhook \
             -H "Content-Type: application/json" \
             -d '{"event_type":"PING","merchant_id":"20701","order_id":0}')
@@ -145,6 +161,9 @@ jobs:
 
           FRONT=$(curl -s -o /dev/null -w "%{http_code}" https://pdvslim.com.br/)
           echo "Frontend smoke test: HTTP $FRONT"
+
+          VAPID=$(curl -s -o /dev/null -w "%{http_code}" https://pdvslim.com.br/api/push/vapid-public-key)
+          echo "VAPID smoke test via nginx: HTTP $VAPID"
           ENDSSH
 
       - name: Commit version bump
