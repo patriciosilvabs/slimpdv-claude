@@ -82,6 +82,10 @@ jobs:
 
           docker ps --filter name=slimpdv-backend --format "Backend: {{.Status}}"
 
+          echo "=== Backend logs (last 60 lines) ==="
+          docker logs slimpdv-backend --tail 60 2>&1 || true
+          echo "=== End backend logs ==="
+
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://pdvslim.com.br/api/functions/cardapioweb-webhook \
             -H "Content-Type: application/json" \
             -d '{"event_type":"PING","merchant_id":"20701","order_id":0}')
