@@ -34,20 +34,20 @@ if (!code.includes(ANCHOR)) {
 const NEW_ROUTES = `// ============================================================
 // PATCH: user management functions (create-user, admin-update-user, admin-delete-user)
 
-// Helper: hash password using whatever bcrypt module is available
+// Helper: hash password using whatever bcrypt module is available (ESM-safe)
 async function _hashPassword(password) {
   try {
-    const b = require('bcryptjs');
+    const b = (await import('bcryptjs')).default;
     return await b.hash(password, 10);
   } catch (_) {}
   try {
-    const b = require('bcrypt');
+    const b = (await import('bcrypt')).default;
     return await b.hash(password, 10);
   } catch (_) {}
-  // Last resort: crypto SHA-256 (not ideal, but won't crash)
-  const crypto = require('crypto');
+  // Last resort: crypto SHA-256
+  const { createHash } = await import('crypto');
   console.warn('[user-mgmt] Using SHA-256 fallback — bcryptjs/bcrypt not available');
-  return '$sha256$' + crypto.createHash('sha256').update(password).digest('hex');
+  return '$sha256$' + createHash('sha256').update(password).digest('hex');
 }
 
 // Helper: get column names for a table
