@@ -29,6 +29,9 @@ import { useCashMovements } from '@/hooks/useReports';
 import { useOrders, Order } from '@/hooks/useOrders';
 import { useUserPermissions } from '@/hooks/useUserPermissions';
 import { useGlobalSettings } from '@/hooks/useGlobalSettings';
+import { useBusinessRules } from '@/hooks/useBusinessRules';
+import { useRequestApproval, ApprovalRequest } from '@/hooks/useApprovalRequest';
+import { ApprovalWaitingDialog } from '@/components/ApprovalWaitingDialog';
 import { AccessDenied } from '@/components/auth/AccessDenied';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -104,6 +107,8 @@ export default function CashRegister() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [showDifferenceAlert, setShowDifferenceAlert] = useState(false);
+  const [cashOpenApprovalReqId, setCashOpenApprovalReqId] = useState<string | null>(null);
+  const [waitingCashApproval, setWaitingCashApproval] = useState(false);
 
   // Query hooks
   const { data: openRegister, isLoading } = useOpenCashRegister();
@@ -114,6 +119,25 @@ export default function CashRegister() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { printCashClosingReceipt, canPrintToCashier } = useCentralizedPrinting();
+  const { rules } = useBusinessRules();
+  const { createRequest: createApprovalRequest } = useRequestApproval();
+
+  // Watch cash open approval request
+  const { data: watchedCashApproval } = useQuery({
+    queryKey: ['approval-request', cashOpenApprovalReqId],
+    queryFn: async () => {
+      if (!cashOpenApprovalReqId) return null;
+      const { data, error } = await (supabase as any)
+        .from('approval_requests')
+        .select('*')
+        .eq('id', cashOpenApprovalReqId)
+        .single();
+      if (error) throw error;
+      return data as ApprovalRequest;
+    },
+    enabled: !!cashOpenApprovalReqId,
+    refetchInterval: 2000,
+  });
 
   // Queries para verificar pendências antes de fechar o caixa
   const { data: openTablesCount } = useQuery({
@@ -246,6 +270,20 @@ export default function CashRegister() {
       toast({ title: 'Valor inválido', variant: 'destructive' });
       return;
     }
+    if (rules.require_auth_cash_reopen) {
+      try {
+        const req = await createApprovalRequest.mutateAsync({
+          rule_type: 'cash_reopen',
+          context: { opening_amount: amount },
+        });
+        setCashOpenApprovalReqId(req.id);
+        setWaitingCashApproval(true);
+      } catch (err: any) {
+        toast({ title: 'Erro ao solicitar autorização', description: err.message, variant: 'destructive' });
+      }
+      return; // Don't open yet - wait for approval
+    }
+    // If no rule, open directly:
     await openCashRegister.mutateAsync(amount);
     setIsOpenDialogOpen(false);
     setOpeningAmount('');
@@ -929,6 +967,27 @@ export default function CashRegister() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <ApprovalWaitingDialog
+        open={waitingCashApproval}
+        onOpenChange={setWaitingCashApproval}
+        request={watchedCashApproval}
+        onApproved={async () => {
+          const amount = parseBRL(openingAmount);
+          await openCashRegister.mutateAsync(amount);
+          setIsOpenDialogOpen(false);
+          setOpeningAmount('');
+          setWaitingCashApproval(false);
+          setCashOpenApprovalReqId(null);
+        }}
+        onDenied={(reason) => {
+          setWaitingCashApproval(false);
+          setCashOpenApprovalReqId(null);
+          toast({ title: 'Abertura negada', description: reason || 'Gerente negou a abertura do caixa', variant: 'destructive' });
+        }}
+        title="Aguardando autorização"
+        description="Solicitação de abertura de caixa enviada ao gerente"
+      />
     </PDVLayout>
   );
 }

@@ -139,7 +139,7 @@ export default function Counter() {
   const isMobile = useIsMobile();
   const { data: pizzaData, isLoading: pizzaDataLoading } = usePizzaProducts();
   const pendingProductRef = useRef<any>(null);
-  const { rules: businessRules, isDiscountAboveLimit, getDiscountLimitForCurrentUser } = useBusinessRules();
+  const { rules: businessRules, isDiscountAboveLimit, getDiscountLimitForCurrentUser, isPaymentMethodRestricted } = useBusinessRules();
   const { createRequest: createApprovalRequest, watchRequest } = useRequestApproval();
   
   const canAddItems = hasPermission('counter_add_items');
@@ -1545,17 +1545,26 @@ export default function Counter() {
                 { method: 'credit_card' as PaymentMethod, icon: CreditCard, label: 'Crédito' },
                 { method: 'debit_card' as PaymentMethod, icon: CreditCard, label: 'Débito' },
                 { method: 'pix' as PaymentMethod, icon: QrCode, label: 'Pix' },
-              ].map(({ method, icon: Icon, label }) => (
-                <Button
-                  key={method}
-                  variant={selectedPaymentMethod === method ? 'default' : 'outline'}
-                  className="flex flex-col h-16 gap-1"
-                  onClick={() => setSelectedPaymentMethod(method)}
-                >
-                  <Icon className="h-5 w-5" />
-                  <span className="text-xs">{label}</span>
-                </Button>
-              ))}
+              ].map(({ method, icon: Icon, label }) => {
+                const restricted = isPaymentMethodRestricted(method);
+                return (
+                  <Button
+                    key={method}
+                    variant={selectedPaymentMethod === method ? 'default' : 'outline'}
+                    className={`flex flex-col h-16 gap-1 ${restricted ? 'opacity-50' : ''}`}
+                    onClick={() => {
+                      if (restricted) {
+                        toast({ title: `Forma de pagamento ${label} não disponível neste horário`, variant: 'destructive' });
+                        return;
+                      }
+                      setSelectedPaymentMethod(method);
+                    }}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span className="text-xs">{label}</span>
+                  </Button>
+                );
+              })}
             </div>
 
             {/* Payment Amount */}

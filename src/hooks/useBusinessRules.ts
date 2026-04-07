@@ -25,6 +25,21 @@ export interface BusinessRulesConfig {
   block_below_cost_enabled: boolean;
   // Rule 22: Audit log
   audit_log_enabled: boolean;
+  // Rule 12: Mandatory cash conference
+  mandatory_cash_conference: boolean;
+  // Rule 14: Cash register reopen authorization
+  require_auth_cash_reopen: boolean;
+  // Rule 20: Operator sales target
+  min_sales_target_enabled: boolean;
+  min_sales_target_amount: number;
+  min_sales_target_alert_percent: number;
+  // Rule 21: Payment method restrictions
+  payment_restrictions_enabled: boolean;
+  payment_restricted_methods: string[];
+  payment_restriction_start: string;
+  payment_restriction_end: string;
+  // Rule 23: Supervisor mode
+  supervisor_mode_enabled: boolean;
 }
 
 const DEFAULT_RULES: BusinessRulesConfig = {
@@ -43,6 +58,16 @@ const DEFAULT_RULES: BusinessRulesConfig = {
   cash_divergence_limit_value: 10,
   block_below_cost_enabled: false,
   audit_log_enabled: true,
+  mandatory_cash_conference: false,
+  require_auth_cash_reopen: false,
+  min_sales_target_enabled: false,
+  min_sales_target_amount: 500,
+  min_sales_target_alert_percent: 50,
+  payment_restrictions_enabled: false,
+  payment_restricted_methods: [],
+  payment_restriction_start: '21:00',
+  payment_restriction_end: '08:00',
+  supervisor_mode_enabled: false,
 };
 
 export function useBusinessRules() {
@@ -77,6 +102,24 @@ export function useBusinessRules() {
     return discountPercent > getDiscountLimitForCurrentUser();
   };
 
+  // Check if a payment method is currently restricted
+  const isPaymentMethodRestricted = (method: string): boolean => {
+    if (!rules.payment_restrictions_enabled) return false;
+    if (!rules.payment_restricted_methods.includes(method)) return false;
+    // Check if current time is within restriction window
+    const now = new Date();
+    const [startH, startM] = rules.payment_restriction_start.split(':').map(Number);
+    const [endH, endM] = rules.payment_restriction_end.split(':').map(Number);
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    // Handle overnight restriction (e.g., 21:00 to 08:00)
+    if (startMinutes > endMinutes) {
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+    }
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  };
+
   return {
     rules,
     updateRule,
@@ -84,6 +127,7 @@ export function useBusinessRules() {
     isLoading,
     getDiscountLimitForCurrentUser,
     isDiscountAboveLimit,
+    isPaymentMethodRestricted,
     isSaving: updateSetting.isPending,
   };
 }

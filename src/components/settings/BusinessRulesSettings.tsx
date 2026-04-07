@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { useBusinessRules } from '@/hooks/useBusinessRules';
-import { Percent, Trash2, Lock, Clock, Wallet, BarChart3, Shield, Loader2 } from 'lucide-react';
+import { Percent, Trash2, Lock, Clock, Wallet, BarChart3, Shield, Loader2, RefreshCw, Target, CreditCard, Eye } from 'lucide-react';
 
 interface RuleToggleProps {
   label: string;
@@ -220,6 +220,25 @@ export function BusinessRulesSettings() {
         </CardContent>
       </Card>
 
+      {/* Rule 14: Cash register reopen authorization */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <RefreshCw className="h-5 w-5 text-blue-500" />
+            Regra 14 — Reabrir Caixa Só com Autorização
+          </CardTitle>
+          <CardDescription>Reabertura do caixa exige aprovação do gerente em tempo real</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RuleToggle
+            label="Exigir autorização para abrir caixa"
+            description="Quando ativo, a abertura do caixa envia notificação ao gerente que precisa aprovar antes de prosseguir."
+            checked={rules.require_auth_cash_reopen}
+            onCheckedChange={(v) => updateRule('require_auth_cash_reopen', v)}
+          />
+        </CardContent>
+      </Card>
+
       {/* Cash register rules */}
       <Card>
         <CardHeader>
@@ -289,6 +308,133 @@ export function BusinessRulesSettings() {
             checked={rules.block_below_cost_enabled}
             onCheckedChange={(v) => updateRule('block_below_cost_enabled', v)}
             badge="Em breve"
+          />
+        </CardContent>
+      </Card>
+
+      {/* Rule 20: Operator sales target */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Target className="h-5 w-5 text-green-500" />
+            Regra 20 — Meta Mínima por Operador
+          </CardTitle>
+          <CardDescription>Define uma meta de vendas para cada operador durante o turno</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-1">
+          <RuleToggle
+            label="Ativar meta de vendas por turno"
+            description="Mostra uma barra de progresso para o operador e alerta quando estiver abaixo da meta."
+            checked={rules.min_sales_target_enabled}
+            onCheckedChange={(v) => updateRule('min_sales_target_enabled', v)}
+          />
+          {rules.min_sales_target_enabled && (
+            <div className="ml-4 pl-4 border-l-2 border-muted space-y-1 mt-2">
+              <RuleNumber
+                label="Meta por turno"
+                description="Valor de vendas esperado por operador no turno"
+                value={rules.min_sales_target_amount}
+                onChange={(v) => updateRule('min_sales_target_amount', v)}
+                suffix="R$"
+                max={99999}
+                min={0}
+              />
+              <RuleNumber
+                label="Alertar quando abaixo de"
+                description="Exibir alerta visual quando o operador estiver abaixo desta % da meta"
+                value={rules.min_sales_target_alert_percent}
+                onChange={(v) => updateRule('min_sales_target_alert_percent', v)}
+                suffix="% da meta"
+                max={100}
+                min={10}
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Rule 21: Payment method restrictions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <CreditCard className="h-5 w-5 text-purple-500" />
+            Regra 21 — Restringir Formas de Pagamento por Horário
+          </CardTitle>
+          <CardDescription>Bloqueia métodos de pagamento em horários configurados (ex: sem dinheiro à noite)</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <RuleToggle
+            label="Ativar restrição de formas de pagamento"
+            description="Bloqueia as formas selecionadas durante o intervalo de horário configurado."
+            checked={rules.payment_restrictions_enabled}
+            onCheckedChange={(v) => updateRule('payment_restrictions_enabled', v)}
+          />
+          {rules.payment_restrictions_enabled && (
+            <div className="ml-4 pl-4 border-l-2 border-muted mt-2 space-y-4">
+              <div>
+                <Label className="text-sm font-medium mb-2 block">Métodos bloqueados no intervalo</Label>
+                {[
+                  { key: 'cash', label: 'Dinheiro' },
+                  { key: 'pix', label: 'PIX' },
+                  { key: 'credit_card', label: 'Cartão de Crédito' },
+                  { key: 'debit_card', label: 'Cartão de Débito' },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between py-1">
+                    <Label className="text-sm">{label}</Label>
+                    <Switch
+                      checked={rules.payment_restricted_methods.includes(key)}
+                      onCheckedChange={(checked) => {
+                        const current = rules.payment_restricted_methods;
+                        const updated = checked
+                          ? [...current, key]
+                          : current.filter((m: string) => m !== key);
+                        updateRule('payment_restricted_methods', updated);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-6">
+                <div className="space-y-1">
+                  <Label className="text-xs">Início da restrição</Label>
+                  <Input
+                    type="time"
+                    value={rules.payment_restriction_start}
+                    onChange={(e) => updateRule('payment_restriction_start', e.target.value)}
+                    className="w-32 h-8 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Fim da restrição</Label>
+                  <Input
+                    type="time"
+                    value={rules.payment_restriction_end}
+                    onChange={(e) => updateRule('payment_restriction_end', e.target.value)}
+                    className="w-32 h-8 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Rule 23: Supervisor mode */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Eye className="h-5 w-5 text-indigo-500" />
+            Regra 23 — Modo Supervisão Ativa
+          </CardTitle>
+          <CardDescription>Gerente vê pedidos, caixa e KDS em tempo real no Dashboard</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RuleToggle
+            label="Ativar supervisão em tempo real"
+            description="Habilita uma visão consolidada no Dashboard para gerentes: pedidos ativos, status do caixa, alertas do KDS e ranking de atendentes."
+            checked={rules.supervisor_mode_enabled}
+            onCheckedChange={(v) => updateRule('supervisor_mode_enabled', v)}
+            badge="Dashboard"
           />
         </CardContent>
       </Card>

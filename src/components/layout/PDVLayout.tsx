@@ -20,6 +20,7 @@ import logoSlim from '@/assets/logo-slim.png';
 import { APP_VERSION } from '@/lib/appVersion';
 import { AppFooter } from '@/components/layout/AppFooter';
 import { ManagerApprovalListener } from '@/components/ManagerApprovalListener';
+import { OperatorTargetWidget } from '@/components/OperatorTargetWidget';
 
 interface NavItem {
   name: string;
@@ -279,6 +280,7 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
         </div>
       </main>
       <ManagerApprovalListener />
+      <OperatorTargetWidget />
       <AppFooter />
     </div>
   );
