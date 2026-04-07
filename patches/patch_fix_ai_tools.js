@@ -15,8 +15,9 @@ const anchor = '];\n\nasync function executarFerramenta';
 const aiEnd = code.indexOf(anchor, aiStart);
 
 if (aiStart < 0 || aiEnd < 0) {
-  console.error('Could not find AI_TOOLS array boundaries');
-  process.exit(1);
+  console.log('AI_TOOLS array not found — nothing to fix (will be created by later patch)');
+  fs.writeFileSync(OUTPUT, code);
+  process.exit(0);
 }
 
 const before = code.slice(0, aiStart + 'const AI_TOOLS = ['.length);
