@@ -17,6 +17,10 @@ interface KdsDataResult {
   stations: any[];
 }
 
+interface KdsTenantInfoResult {
+  tenant_name: string | null;
+}
+
 export class DeviceAuthError extends Error {
   constructor(message: string) {
     super(message);
@@ -71,10 +75,37 @@ export function useKdsDeviceData(deviceAuth: DeviceAuth | null) {
   const queryClient = useQueryClient();
   const isDeviceMode = !!deviceAuth?.tenantId && !!deviceAuth?.deviceId && !!deviceAuth?.authCode;
   const [authError, setAuthError] = useState(false);
+  const [tenantName, setTenantName] = useState<string | null>(null);
 
   // Reset auth error when credentials change
   useEffect(() => {
     setAuthError(false);
+  }, [deviceAuth?.deviceId, deviceAuth?.authCode]);
+
+  // Fetch tenant name once on mount (or when device changes) — works for existing sessions
+  useEffect(() => {
+    if (!isDeviceMode || !deviceAuth) return;
+    let cancelled = false;
+    fetchKdsData(deviceAuth, 'get_tenant_info')
+      .then((result: KdsTenantInfoResult) => {
+        if (!cancelled && result?.tenant_name) {
+          setTenantName(result.tenant_name);
+          // Silently update localStorage so future sessions have it
+          try {
+            const stored = localStorage.getItem('kds_device_auth');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (!parsed.tenantName) {
+                parsed.tenantName = result.tenant_name;
+                localStorage.setItem('kds_device_auth', JSON.stringify(parsed));
+              }
+            }
+          } catch { /* ignore */ }
+        }
+      })
+      .catch(() => { /* non-critical, ignore */ });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceAuth?.deviceId, deviceAuth?.authCode]);
 
   // Fetch all data (orders + settings + stations) in one call
@@ -190,6 +221,7 @@ export function useKdsDeviceData(deviceAuth: DeviceAuth | null) {
     orders: (allData?.orders || []) as Order[],
     settings: allData?.settings || null,
     stations: allData?.stations || [],
+    tenantName,
     isLoading,
     refetch,
     updateOrderStatus,

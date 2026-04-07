@@ -417,14 +417,14 @@ export default function KDS() {
           <img src={logoSlim} alt="Slim" className={cn("h-7", isDark && "brightness-200")} />
           <span className={cn("text-xs", isDark ? "text-zinc-500" : "text-muted-foreground")}>v{APP_VERSION}</span>
           {/* Store name for device mode — shows which tenant this KDS is linked to */}
-          {isDeviceAuth && deviceAuth?.tenantName && (
+          {isDeviceAuth && (deviceData.tenantName || deviceAuth?.tenantName) && (
             <span className={cn(
               "text-xs font-medium px-2 py-0.5 rounded border",
               isDark
                 ? "border-zinc-600 text-zinc-300 bg-zinc-800"
                 : "border-slate-300 text-slate-600 bg-slate-50"
             )}>
-              🏪 {deviceAuth.tenantName}
+              🏪 {deviceData.tenantName || deviceAuth?.tenantName}
             </span>
           )}
         </div>
