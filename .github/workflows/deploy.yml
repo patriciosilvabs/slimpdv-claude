@@ -90,7 +90,7 @@ PGSQL
           docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
           rm -f /tmp/server_patched.js
 
-          for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist; do
+          for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist patch_kds_tenant_name; do
             echo "  -> $patch"
             node /tmp/${patch}.js || { echo "PATCH ERROR: $patch"; exit 1; }
           done

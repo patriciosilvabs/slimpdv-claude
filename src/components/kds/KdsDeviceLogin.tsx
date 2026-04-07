@@ -19,6 +19,7 @@ export interface StoredKdsDeviceAuth {
   stationId: string | null;
   tenantId: string | null;
   authCode: string;
+  tenantName: string | null;
 }
 
 const DEVICE_AUTH_KEY = 'kds_device_auth';
@@ -40,6 +41,7 @@ export function getStoredDeviceAuth(): StoredKdsDeviceAuth | null {
         stationId: parsed.stationId ?? null,
         tenantId: parsed.tenantId ?? null,
         authCode: parsed.authCode,
+        tenantName: parsed.tenantName ?? null,
       };
     }
   } catch {}
@@ -93,6 +95,7 @@ export function KdsDeviceLogin({ onLoginSuccess }: KdsDeviceLoginProps) {
         stationId: device.station_id,
         tenantId: device.tenant_id || null,
         authCode,
+        tenantName: device.tenant_name || null,
       };
       localStorage.setItem(DEVICE_AUTH_KEY, JSON.stringify(authData));
       localStorage.setItem('pdv_kds_device_id', device.device_id);
