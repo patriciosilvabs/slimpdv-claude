@@ -84,16 +84,20 @@ export function usePersistentSettings<T extends Record<string, any>>({
   const { data: queryData, isLoading } = useQuery({
     queryKey: ['persistent-settings', settingsKey],
     queryFn: async () => {
-      try {
-        const response = await apiClient.get<{ value: Partial<T> | null }>(`/settings/${settingsKey}`);
-        if (response.value) {
-          const merged = smartMerge(response.value, defaults);
-          saveToLocalStorage(merged);
-          return { settings: merged, fromApi: true };
+      // Skip API call if there is no auth token (e.g. KDS device mode)
+      const hasToken = !!localStorage.getItem('auth_token');
+      if (hasToken) {
+        try {
+          const response = await apiClient.get<{ value: Partial<T> | null }>(`/settings/${settingsKey}`);
+          if (response.value) {
+            const merged = smartMerge(response.value, defaults);
+            saveToLocalStorage(merged);
+            return { settings: merged, fromApi: true };
+          }
+        } catch (err) {
+          // API indisponível ou erro — usar localStorage
+          console.warn(`[usePersistentSettings] API error for ${settingsKey}, falling back to localStorage`, err);
         }
-      } catch (err) {
-        // API indisponível ou erro — usar localStorage
-        console.warn(`[usePersistentSettings] API error for ${settingsKey}, falling back to localStorage`, err);
       }
 
       // Fallback: localStorage
