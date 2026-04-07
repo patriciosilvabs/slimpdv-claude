@@ -6,7 +6,7 @@ const audioCache = new Map<string, string>();
 let _audioCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext {
-  if (!_audioCtx) {
+  if (!_audioCtx || _audioCtx.state === 'closed') {
     _audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
   }
   return _audioCtx;
@@ -18,6 +18,25 @@ export function unlockAudioContext(): void {
   if (ctx.state === 'suspended') {
     ctx.resume().catch(() => {});
   }
+}
+
+/** Ensure the audio context is running before every playback attempt. */
+async function ensureAudioContextRunning(): Promise<AudioContext> {
+  let ctx = getAudioContext();
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume();
+    } catch (_) {
+      // Resume failed — recreate context
+      _audioCtx = null;
+      ctx = getAudioContext();
+    }
+  }
+  if (ctx.state === 'closed') {
+    _audioCtx = null;
+    ctx = getAudioContext();
+  }
+  return ctx;
 }
 
 function createWavBlob(samples: Float32Array, sampleRate: number): Blob {
@@ -170,25 +189,34 @@ export async function getPredefinedSoundUrl(soundId: string): Promise<string> {
   return url;
 }
 
+// Debounce lock: prevent same sound from double-firing within 500ms
+const _playingLocks = new Map<string, number>();
+
 export async function playPredefinedSound(soundId: string, volume = 0.7): Promise<void> {
-  const url = await getPredefinedSoundUrl(soundId);
-  const ctx = getAudioContext();
+  // Deduplicate: if this exact sound fired less than 500ms ago, skip
+  const now = Date.now();
+  const lastPlayed = _playingLocks.get(soundId) ?? 0;
+  if (now - lastPlayed < 500) return;
+  _playingLocks.set(soundId, now);
 
-  if (ctx.state === 'suspended') {
-    await ctx.resume();
+  try {
+    const url = await getPredefinedSoundUrl(soundId);
+    const ctx = await ensureAudioContextRunning();
+
+    // Decode the WAV data URL via fetch → ArrayBuffer → AudioBuffer
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = volume;
+    gainNode.connect(ctx.destination);
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(gainNode);
+    source.start();
+  } catch (error) {
+    console.warn('[sound] playPredefinedSound failed:', soundId, error);
   }
-
-  // Decode the WAV data URL via fetch → ArrayBuffer → AudioBuffer
-  const response = await fetch(url);
-  const arrayBuffer = await response.arrayBuffer();
-  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-  const gainNode = ctx.createGain();
-  gainNode.gain.value = volume;
-  gainNode.connect(ctx.destination);
-
-  const source = ctx.createBufferSource();
-  source.buffer = audioBuffer;
-  source.connect(gainNode);
-  source.start();
 }
