@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 /**
- * Patch: Web Push notifications
+ * Patch: Web Push notifications (v3)
  *
  * Adds:
  *  - push_subscriptions table migration
- *  - POST   /api/push/subscribe   — save browser push subscription
- *  - DELETE /api/push/unsubscribe — remove subscription
- *  - GET    /api/push/vapid-public-key — return VAPID public key to frontend
+ *  - GET    /api/push/vapid-public-key  (+ alias /push/vapid-public-key)
+ *  - POST   /api/push/subscribe         (+ alias /push/subscribe)
+ *  - DELETE /api/push/unsubscribe       (+ alias /push/unsubscribe)
  *  - Internal sendPushToTenant(tenantId, payload) helper
  *  - Calls sendPushToTenant when order status changes to 'ready'
+ *
+ * Routes are registered at BOTH /api/push/* and /push/* so that the backend
+ * works regardless of whether nginx keeps or strips the /api/ prefix.
  */
 const fs = require('fs');
 
@@ -17,22 +20,72 @@ const OUTPUT = '/tmp/server_patched.js';
 
 let code = fs.readFileSync(INPUT, 'utf8');
 
-if (code.includes('// PATCH: push_notifications_v2')) {
-  console.log('push_notifications v2 already applied — skipping');
+if (code.includes('// PATCH: push_notifications_v3')) {
+  console.log('push_notifications v3 already applied — skipping');
   fs.writeFileSync(OUTPUT, code);
   process.exit(0);
 }
 
-// Upgrade v1 → v2: just fix the route paths (nginx strips /api/ prefix)
-if (code.includes('// PATCH: push_notifications')) {
-  console.log('Upgrading push_notifications v1 → v2 (fixing /api/push/ → /push/ routes)...');
+// Upgrade v1/v2 → v3: inject standalone /api/push/* route handlers
+// (does NOT touch existing /push/* routes — just adds aliases before health route)
+if (code.includes('// PATCH: push_notifications_v2') || code.includes('// PATCH: push_notifications')) {
+  console.log('Upgrading push_notifications to v3 (adding /api/push/* aliases)...');
+
+  const healthAnchor = "app.get('/api/health'";
+  const healthIdx = code.indexOf(healthAnchor);
+
+  if (healthIdx === -1) {
+    // Can't find anchor — update marker only and exit gracefully
+    code = code
+      .replace('// PATCH: push_notifications_v2\n', '// PATCH: push_notifications_v3\n')
+      .replace('// PATCH: push_notifications\n', '// PATCH: push_notifications_v3\n');
+    fs.writeFileSync(OUTPUT, code);
+    console.log('push_notifications v3: marker updated (health anchor not found, aliases skipped)');
+    process.exit(0);
+  }
+
+  // Update the safety marker
   code = code
-    .replace("app.get('/api/push/vapid-public-key'", "app.get('/push/vapid-public-key'")
-    .replace("app.post('/api/push/subscribe'", "app.post('/push/subscribe'")
-    .replace("app.delete('/api/push/unsubscribe'", "app.delete('/push/unsubscribe'")
-    .replace('// PATCH: push_notifications\n', '// PATCH: push_notifications_v2\n');
+    .replace('// PATCH: push_notifications_v2\n', '// PATCH: push_notifications_v3\n')
+    .replace('// PATCH: push_notifications\n', '// PATCH: push_notifications_v3\n');
+
+  // Inject /api/push/* aliases (standalone handlers) before the health route
+  const apiAliases = `
+// PATCH: push_notifications_v3 — /api/push/* aliases (nginx may keep /api/ prefix)
+app.get('/api/push/vapid-public-key', function(req, res) {
+  var key = process.env.VAPID_PUBLIC_KEY || null;
+  res.json({ publicKey: key });
+});
+app.post('/api/push/subscribe', authenticateToken, async function(req, res) {
+  var ep = req.body && req.body.endpoint, keys = req.body && req.body.keys;
+  if (!ep || !keys || !keys.p256dh || !keys.auth) return res.status(400).json({ error: 'endpoint and keys required' });
+  try {
+    var tr = await pool.query('SELECT tenant_id FROM tenant_members WHERE user_id = $1 LIMIT 1', [req.user.id]);
+    var tid = tr.rows[0] && tr.rows[0].tenant_id;
+    if (!tid) return res.status(400).json({ error: 'No tenant found for user' });
+    await pool.query('INSERT INTO push_subscriptions (tenant_id,user_id,endpoint,p256dh,auth,user_agent) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (endpoint) DO UPDATE SET tenant_id=$1,user_id=$2,p256dh=$4,auth=$5,user_agent=$6,created_at=NOW()', [tid, req.user.id, ep, keys.p256dh, keys.auth, req.headers['user-agent'] || '']);
+    res.json({ success: true });
+  } catch(e) { console.error('[push] subscribe error:', e.message); res.status(500).json({ error: e.message }); }
+});
+app.post('/api/push/unsubscribe', authenticateToken, async function(req, res) {
+  var ep = req.body && req.body.endpoint;
+  if (!ep) return res.status(400).json({ error: 'endpoint required' });
+  try { await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2', [ep, req.user.id]); res.json({ success: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/push/unsubscribe', authenticateToken, async function(req, res) {
+  var ep = req.body && req.body.endpoint;
+  if (!ep) return res.status(400).json({ error: 'endpoint required' });
+  try { await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2', [ep, req.user.id]); res.json({ success: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+`;
+
+  const updatedHealthIdx = code.indexOf(healthAnchor);
+  code = code.slice(0, updatedHealthIdx) + apiAliases + code.slice(updatedHealthIdx);
   fs.writeFileSync(OUTPUT, code);
-  console.log('push_notifications upgraded to v2: routes now at /push/* (nginx strips /api/)');
+  console.log('push_notifications upgraded to v3: /api/push/* aliases added before health route');
   process.exit(0);
 }
 
@@ -53,7 +106,7 @@ const orderReadyIdx = code.indexOf(ORDER_READY_ANCHOR);
 
 // ── Build push infrastructure code ───────────────────────────────────────────
 const pushSetup = `
-// PATCH: push_notifications_v2
+// PATCH: push_notifications_v3
 // ── Web Push (VAPID) setup ────────────────────────────────────────────────────
 let webpush = null;
 try {
@@ -129,14 +182,16 @@ async function sendPushToTenant(tenantId, payload) {
   }
 }
 
-// ── GET /push/vapid-public-key (nginx strips /api/ prefix before forwarding) ──
-app.get('/push/vapid-public-key', (req, res) => {
+// ── GET vapid-public-key — registered at BOTH paths (nginx may keep or strip /api/) ──
+const _vapidHandler = (req, res) => {
   const key = process.env.VAPID_PUBLIC_KEY || null;
   res.json({ publicKey: key });
-});
+};
+app.get('/push/vapid-public-key', _vapidHandler);
+app.get('/api/push/vapid-public-key', _vapidHandler);
 
-// ── POST /push/subscribe ──────────────────────────────────────────────────────
-app.post('/push/subscribe', authenticateToken, async (req, res) => {
+// ── POST subscribe — registered at BOTH paths ─────────────────────────────────
+const _subscribeHandler = async (req, res) => {
   const { endpoint, keys } = req.body || {};
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'endpoint and keys required' });
@@ -160,10 +215,12 @@ app.post('/push/subscribe', authenticateToken, async (req, res) => {
     console.error('[push] subscribe error:', e.message);
     res.status(500).json({ error: e.message });
   }
-});
+};
+app.post('/push/subscribe', authenticateToken, _subscribeHandler);
+app.post('/api/push/subscribe', authenticateToken, _subscribeHandler);
 
-// ── DELETE /push/unsubscribe (also accept POST for browser compatibility) ─────
-app.post('/push/unsubscribe', authenticateToken, async (req, res) => {
+// ── DELETE/POST unsubscribe — registered at BOTH paths ───────────────────────
+const _unsubscribeHandler = async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
   try {
@@ -172,17 +229,11 @@ app.post('/push/unsubscribe', authenticateToken, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
-app.delete('/push/unsubscribe', authenticateToken, async (req, res) => {
-  const { endpoint } = req.body || {};
-  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
-  try {
-    await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2', [endpoint, req.user.id]);
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+};
+app.post('/push/unsubscribe', authenticateToken, _unsubscribeHandler);
+app.post('/api/push/unsubscribe', authenticateToken, _unsubscribeHandler);
+app.delete('/push/unsubscribe', authenticateToken, _unsubscribeHandler);
+app.delete('/api/push/unsubscribe', authenticateToken, _unsubscribeHandler);
 
 `;
 
@@ -213,4 +264,4 @@ const finalAnchorIdx = patchedCode.indexOf(ANCHOR_ROUTES);
 patchedCode = patchedCode.slice(0, finalAnchorIdx) + pushSetup + patchedCode.slice(finalAnchorIdx);
 
 fs.writeFileSync(OUTPUT, patchedCode);
-console.log('push_notifications v2 applied: routes at /push/* (nginx strips /api/) + subscribe/unsubscribe + order-ready trigger');
+console.log('push_notifications v3 applied: routes at BOTH /push/* and /api/push/* + subscribe/unsubscribe + order-ready trigger');
