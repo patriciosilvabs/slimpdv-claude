@@ -75,17 +75,34 @@ export function useAudioNotification() {
       const isPredefined = selectedSoundId in PREDEFINED_SOUNDS;
 
       if (isPredefined) {
+        // playPredefinedSound already has 500ms debounce built in
         await playPredefinedSound(selectedSoundId, settings.volume);
       } else {
+        // Custom sound — try URL first, fallback to predefined if it fails
         const soundUrl = settings.customSoundUrls[type];
         if (soundUrl) {
-          const audio = new Audio(soundUrl);
-          audio.volume = settings.volume;
-          await audio.play();
+          try {
+            const audio = new Audio(soundUrl);
+            audio.volume = settings.volume;
+            // Timeout: if custom sound doesn't load in 2s, use fallback
+            await Promise.race([
+              audio.play(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+            ]);
+          } catch (customErr) {
+            console.warn('[sound] Custom sound failed, using predefined fallback:', customErr);
+            // Fallback to the default predefined sound for this type
+            const fallbackId = defaultSettings.selectedSounds[type] || 'beepClassic';
+            await playPredefinedSound(fallbackId, settings.volume);
+          }
+        } else {
+          // No URL — use predefined fallback
+          const fallbackId = defaultSettings.selectedSounds[type] || 'beepClassic';
+          await playPredefinedSound(fallbackId, settings.volume);
         }
       }
     } catch (error) {
-      console.warn('Could not play notification sound:', error);
+      console.warn('[sound] Could not play notification sound:', type, error);
     }
   }, [settings]);
 

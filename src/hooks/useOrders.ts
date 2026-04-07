@@ -132,9 +132,9 @@ export function useOrders(status?: OrderStatus[]) {
 
   const query = useQuery({
     queryKey: ['orders', stableStatus],
-    // Poll every 10s — LocalSupabaseClient.channel() is a no-op so realtime events never fire;
+    // Poll every 4s — LocalSupabaseClient.channel() is a no-op so realtime events never fire;
     // polling ensures KDS and other pages stay up to date without manual refresh.
-    refetchInterval: 15000,
+    refetchInterval: 4000,
     queryFn: async () => {
       let q = supabase
         .from('orders')
