@@ -14,84 +14,72 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Bump version
+        id: version
         run: |
-          VERSION=$(python3 -c "
+          python3 -c "
           import json
           with open('version.json') as f:
               d = json.load(f)
           parts = str(d['version']).split('.')
-          d['version'] = f\"{parts[0]}.{int(parts[1])+1}\"
+          d['version'] = '{}.{}'.format(parts[0], int(parts[1])+1)
           with open('version.json','w') as f:
               json.dump(d, f)
           print(d['version'])
-          ")
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Bumped to v$VERSION"
+          " > /tmp/new_version.txt
+          echo "VERSION=$(cat /tmp/new_version.txt)" >> $GITHUB_OUTPUT
+          echo "Bumped to v$(cat /tmp/new_version.txt)"
 
-      - name: Upload src + patches to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: 72.61.25.92
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "src/,patches/,version.json"
-          target: /var/www/slimpdv
-          strip_components: 0
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H 72.61.25.92 >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Build and deploy
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 72.61.25.92
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 12m
-          script: |
-            set -e
-            cd /var/www/slimpdv
+      - name: Upload files to VPS
+        run: |
+          rsync -az --delete src/ root@72.61.25.92:/var/www/slimpdv/src/ -e "ssh -i ~/.ssh/vps_key"
+          rsync -az patches/ root@72.61.25.92:/var/www/slimpdv/patches/ -e "ssh -i ~/.ssh/vps_key"
+          scp -i ~/.ssh/vps_key version.json root@72.61.25.92:/var/www/slimpdv/version.json
 
-            # Copy patches to /tmp
-            cp patches/patch_*.js /tmp/
+      - name: Build frontend + apply backend patches
+        run: |
+          ssh -i ~/.ssh/vps_key root@72.61.25.92 bash << 'ENDSSH'
+          set -e
+          cd /var/www/slimpdv
 
-            # Rebuild frontend container
-            docker compose build frontend 2>&1 | tail -5
-            docker compose up -d frontend 2>&1 | tail -3
+          cp patches/patch_*.js /tmp/
 
-            # Apply backend patches
-            docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
-            rm -f /tmp/server_patched.js
+          echo "Building frontend..."
+          docker compose build frontend 2>&1 | tail -5
+          docker compose up -d frontend 2>&1 | tail -3
 
-            for patch in \
-              patch_cardapioweb_all \
-              patch_cardapioweb_delivery_only \
-              patch_kds_fix \
-              patch_import_menu \
-              patch_fix_ai_tools \
-              patch_listar_pedidos_v2 \
-              patch_ai_chat \
-              patch_ai_expand \
-              patch_sounds_mappings; do
-              echo "Applying $patch..."
-              node /tmp/${patch}.js || { echo "PATCH ERROR: $patch"; exit 1; }
-            done
+          echo "Applying backend patches..."
+          docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
+          rm -f /tmp/server_patched.js
 
-            node --check /tmp/server_patched.js
-            docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
-            docker restart slimpdv-backend
-            sleep 4
+          for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings; do
+            echo "  -> $patch"
+            node /tmp/${patch}.js || { echo "PATCH ERROR: $patch"; exit 1; }
+          done
 
-            STATUS=$(docker ps --filter name=slimpdv-backend --format "{{.Status}}")
-            echo "Backend: $STATUS"
+          node --check /tmp/server_patched.js
+          docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
+          docker restart slimpdv-backend
+          sleep 4
 
-            # Smoke test
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://pdvslim.com.br/api/functions/cardapioweb-webhook \
-              -H "Content-Type: application/json" \
-              -d '{"event_type":"PING","merchant_id":"20701","order_id":0}')
-            echo "Webhook smoke test: HTTP $HTTP"
+          docker ps --filter name=slimpdv-backend --format "Backend: {{.Status}}"
+
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://pdvslim.com.br/api/functions/cardapioweb-webhook \
+            -H "Content-Type: application/json" \
+            -d '{"event_type":"PING","merchant_id":"20701","order_id":0}')
+          echo "Webhook smoke test: HTTP $HTTP"
+          ENDSSH
 
       - name: Commit version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.json
-          git commit -m "chore: bump version to v${{ env.VERSION }} [skip ci]"
+          git diff --cached --quiet || git commit -m "chore: bump to v${{ steps.version.outputs.VERSION }} [skip ci]"
           git push
