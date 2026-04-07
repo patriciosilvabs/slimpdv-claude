@@ -104,11 +104,41 @@ jobs:
 
           # ── PATCH SERVER.JS ───────────────────────────────────────────────────────
           echo "Applying backend patches..."
+
+          # Diagnose container entry point BEFORE patching
+          echo "=== Container entry point investigation ==="
+          docker inspect slimpdv-backend --format 'CMD: {{json .Config.Cmd}} | Entrypoint: {{json .Config.Entrypoint}}' 2>/dev/null || true
+          docker exec slimpdv-backend ls /app/ 2>/dev/null | head -30 || true
+          docker exec slimpdv-backend ls /app/dist/ 2>/dev/null && echo "(dist/ exists)" || echo "(no dist/ dir)"
+
+          # Always source from /app/server.js — the monolithic JS file with all patch anchors.
+          # (dist/server.js is compiled TypeScript with minimal routes; it lacks the anchors
+          #  but IS the actual entry point. We overwrite it with the patched result below.)
+          echo "Source: /app/server.js"
           docker cp slimpdv-backend:/app/server.js /tmp/server_current.js
           rm -f /tmp/server_patched.js
 
+          # Check that the source has the expected patch anchors
+          echo "Source file size: $(wc -c < /tmp/server_current.js) bytes"
+          grep -c "app.get('/api/health'" /tmp/server_current.js 2>/dev/null && echo "Health anchor found" || echo "WARN: Health anchor NOT found — patches may skip"
+
           # Install web-push inside the new container
           docker exec slimpdv-backend npm install web-push --no-save 2>&1 | tail -3 || true
+
+          # Ensure CJS mode: remove "type":"module" from package.json so require() works
+          docker exec slimpdv-backend node -e "
+          const fs = require('fs');
+          try {
+            const pkg = JSON.parse(fs.readFileSync('/app/package.json', 'utf8'));
+            if (pkg.type) {
+              delete pkg.type;
+              fs.writeFileSync('/app/package.json', JSON.stringify(pkg, null, 2));
+              console.log('[patch] Removed type:module from package.json — CJS mode enabled');
+            } else {
+              console.log('[patch] package.json already CJS compatible');
+            }
+          } catch(e) { console.log('[patch] package.json note:', e.message); }
+          " 2>/dev/null || echo "package.json CJS update skipped"
 
           for patch in patch_cardapioweb_all patch_cardapioweb_delivery_only patch_kds_fix patch_ready_at patch_import_menu patch_fix_ai_tools patch_listar_pedidos_v2 patch_ai_chat patch_ai_expand patch_sounds_mappings patch_user_management patch_kds_device_actions patch_dispatch_checklist patch_kds_tenant_name patch_kds_tenant_info patch_push_notifications; do
             echo "  -> $patch"
@@ -117,8 +147,22 @@ jobs:
 
           node --check /tmp/server_patched.js
 
-          # ── COPY patched server.js + restart (no recreate) ────────────────────────
+          # ── COPY patched server.js to ALL possible entry points ───────────────────
+          echo "Installing patched server.js..."
+          # Always write to both locations so the server runs the patched code
+          # regardless of whether CMD is "node server.js" or "node dist/server.js"
           docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
+          if docker exec slimpdv-backend test -d /app/dist 2>/dev/null; then
+            docker cp /tmp/server_patched.js slimpdv-backend:/app/dist/server.js
+            echo "Patched server.js installed to /app/server.js AND /app/dist/server.js"
+          else
+            echo "Patched server.js installed to /app/server.js only"
+          fi
+
+          # Verify the patched file is in the container
+          docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/server.js" || echo "WARN: push routes not found in /app/server.js"
+          docker exec slimpdv-backend grep -c "push/vapid" /app/dist/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/dist/server.js" || true
+
           docker restart slimpdv-backend
           sleep 5
 
@@ -133,9 +177,13 @@ jobs:
 
           docker ps --filter name=slimpdv --format "{{.Names}}: {{.Status}}"
 
-          echo "=== Backend logs (last 30 lines) ==="
-          docker logs slimpdv-backend --tail 30 2>&1 || true
+          echo "=== Backend logs (last 40 lines) ==="
+          docker logs slimpdv-backend --tail 40 2>&1 || true
           echo "=== End backend logs ==="
+
+          echo "=== Verify patched routes active in container ==="
+          docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null || echo "check /app/server.js failed"
+          docker exec slimpdv-backend grep -c "push/vapid" /app/dist/server.js 2>/dev/null || echo "check /app/dist/server.js failed (may not exist)"
 
           echo "=== Frontend logs (last 10 lines) ==="
           docker logs slimpdv-frontend --tail 10 2>&1 || true
