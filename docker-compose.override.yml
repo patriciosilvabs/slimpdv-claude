@@ -1,0 +1,60 @@
+# Docker Compose Override for Development
+# This file is automatically loaded after docker-compose.yml
+# Use for development overrides (live reload, debug ports, etc)
+
+version: '3.8'
+
+services:
+  postgres:
+    # Expose PostgreSQL to host for local development
+    ports:
+      - "5432:5432"
+    # Persist data between restarts
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    # Build from source with live reload in development
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: npm run dev
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      # Hot reload on file changes
+      - ./backend/src:/app/src
+      - ./backend/package.json:/app/package.json
+      # Exclude node_modules from mount
+      - /app/node_modules
+    ports:
+      - "5000:5000"
+    # Allow debugging
+    expose:
+      - "5000"
+      - "9229" # Node debugger port
+
+  frontend:
+    # Run Vite dev server with hot module replacement
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run dev
+    environment:
+      NODE_ENV: development
+      VITE_API_URL: http://localhost:5000/api
+    volumes:
+      # Hot reload on file changes
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./package.json:/app/package.json
+      - ./vite.config.ts:/app/vite.config.ts
+      # Exclude node_modules
+      - /app/node_modules
+    ports:
+      - "5173:5173" # Vite dev server default port (alternative 3000)
+      - "3000:3000" # If using serve instead of vite dev
+
+# For development, use:
+# docker-compose -f docker-compose.yml -f docker-compose.override.yml up

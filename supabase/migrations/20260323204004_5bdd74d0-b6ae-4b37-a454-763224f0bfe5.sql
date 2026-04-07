@@ -1,0 +1,1 @@
+ALTER TABLE public.kds_global_settings ADD COLUMN IF NOT EXISTS hide_flavor_category_kds boolean NOT NULL DEFAULT false;

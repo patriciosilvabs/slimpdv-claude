@@ -1,0 +1,25 @@
+project_id = "cphyoattbofiwrthtgrh"
+
+[functions.kds-device-auth]
+verify_jwt = false
+
+[functions.kds-data]
+verify_jwt = false
+
+[functions.order-webhooks]
+verify_jwt = false
+
+[functions.import-menu]
+verify_jwt = false
+
+[functions.cardapioweb-process-queue]
+verify_jwt = false
+
+[functions.cardapioweb-reconcile]
+verify_jwt = false
+
+[functions.cleanup-orders]
+verify_jwt = false
+
+[functions.test-webhook-connection]
+verify_jwt = false

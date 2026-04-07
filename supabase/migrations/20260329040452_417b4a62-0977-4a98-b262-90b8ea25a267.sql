@@ -1,0 +1,1 @@
+ALTER TABLE orders ADD COLUMN pager_number text DEFAULT NULL;

@@ -1,0 +1,1 @@
+ALTER TABLE public.complement_option_ingredients ADD CONSTRAINT complement_option_ingredients_option_ingredient_unique UNIQUE (complement_option_id, ingredient_id);

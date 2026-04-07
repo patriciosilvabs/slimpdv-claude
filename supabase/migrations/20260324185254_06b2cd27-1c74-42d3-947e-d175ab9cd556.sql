@@ -1,0 +1,1 @@
+UPDATE storage.buckets SET public = true WHERE name = 'notification-sounds';

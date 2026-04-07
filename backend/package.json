@@ -1,0 +1,46 @@
+{
+  "name": "slimpdv-backend",
+  "version": "1.0.0",
+  "description": "SlimPDV Backend - POS and Restaurant Management System",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit",
+    "migrate": "ts-node src/database/migrations.ts"
+  },
+  "keywords": [
+    "pos",
+    "restaurant",
+    "management",
+    "slimpdv"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.1.2",
+    "pg": "^8.11.3",
+    "dotenv": "^16.3.1",
+    "express-async-errors": "^3.1.1",
+    "axios": "^1.6.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.6",
+    "@types/pg": "^8.10.9",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/bcryptjs": "^2.4.6",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0",
+    "ts-node": "^10.9.2",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.16.0",
+    "@typescript-eslint/parser": "^6.16.0"
+  }
+}

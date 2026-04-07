@@ -1,0 +1,1 @@
+ALTER TABLE public.kds_global_settings ADD COLUMN IF NOT EXISTS dark_mode boolean NOT NULL DEFAULT false;

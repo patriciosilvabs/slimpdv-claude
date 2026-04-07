@@ -1,0 +1,1 @@
+ALTER TABLE order_items ADD COLUMN fulfillment_type text DEFAULT NULL;

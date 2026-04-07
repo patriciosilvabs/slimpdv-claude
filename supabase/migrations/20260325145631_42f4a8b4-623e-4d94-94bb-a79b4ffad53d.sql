@@ -1,0 +1,1 @@
+ALTER TABLE public.ingredients ADD COLUMN is_insumo boolean NOT NULL DEFAULT false;

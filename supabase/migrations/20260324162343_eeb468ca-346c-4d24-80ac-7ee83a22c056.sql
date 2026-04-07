@@ -1,0 +1,1 @@
+ALTER TABLE public.order_item_extras DROP CONSTRAINT IF EXISTS order_item_extras_extra_id_fkey;

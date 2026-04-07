@@ -1,0 +1,1 @@
+ALTER TABLE public.products ADD COLUMN dispatch_keywords TEXT[] DEFAULT '{}';
