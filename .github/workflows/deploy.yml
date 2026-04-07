@@ -3,6 +3,7 @@ name: Deploy to VPS
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -114,16 +115,32 @@ jobs:
           fi
           sleep 4
 
-          docker ps --filter name=slimpdv-backend --format "Backend: {{.Status}}"
+          docker ps --filter name=slimpdv --format "{{.Names}}: {{.Status}}"
 
-          echo "=== Backend logs (last 60 lines) ==="
-          docker logs slimpdv-backend --tail 60 2>&1 || true
+          echo "=== Backend logs (last 30 lines) ==="
+          docker logs slimpdv-backend --tail 30 2>&1 || true
           echo "=== End backend logs ==="
+
+          echo "=== Frontend logs (last 10 lines) ==="
+          docker logs slimpdv-frontend --tail 10 2>&1 || true
+          echo "=== End frontend logs ==="
+
+          # Ensure frontend is running (restart if exited)
+          FRONTEND_STATUS=$(docker inspect -f '{{.State.Status}}' slimpdv-frontend 2>/dev/null || echo "missing")
+          echo "Frontend container status: $FRONTEND_STATUS"
+          if [ "$FRONTEND_STATUS" != "running" ]; then
+            echo "Frontend not running — restarting..."
+            docker compose up -d frontend 2>&1 | tail -3
+            sleep 3
+          fi
 
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://pdvslim.com.br/api/functions/cardapioweb-webhook \
             -H "Content-Type: application/json" \
             -d '{"event_type":"PING","merchant_id":"20701","order_id":0}')
           echo "Webhook smoke test: HTTP $HTTP"
+
+          FRONT=$(curl -s -o /dev/null -w "%{http_code}" https://pdvslim.com.br/)
+          echo "Frontend smoke test: HTTP $FRONT"
           ENDSSH
 
       - name: Commit version bump
