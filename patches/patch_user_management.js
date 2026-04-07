@@ -89,7 +89,7 @@ lines.push('    const result = await pool.query(insertSQL, insertVals);');
 lines.push('    const userId = result.rows[0].id;');
 lines.push("    console.log('[create-user] created userId:', userId);");
 lines.push('    if (targetTenantId) {');
-lines.push("      try { await pool.query('INSERT INTO tenant_members (user_id, tenant_id, role) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, user_id) DO NOTHING', [userId, targetTenantId, role || 'waiter']); } catch(e) { console.warn('[create-user] tenant_members:', e.message); }");
+lines.push("      try { await pool.query('INSERT INTO tenant_members (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT (tenant_id, user_id) DO NOTHING', [userId, targetTenantId]); } catch(e) { console.warn('[create-user] tenant_members:', e.message); }");
 lines.push("      if (role) { try { await pool.query('INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [userId, role, targetTenantId]); } catch(e) { console.warn('[create-user] user_roles:', e.message); } }");
 lines.push('    }');
 lines.push('    return res.json({ user: { id: userId, email: cleanEmail, name: displayName }, success: true });');
