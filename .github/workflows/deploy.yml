@@ -221,6 +221,33 @@ jobs:
           docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/server.js" || echo "WARN: push routes not found in /app/server.js"
           docker exec slimpdv-backend grep -c "push/vapid" /app/dist/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/dist/server.js" || true
 
+          # ── Inject vapidGuard into server_original.js (survives entrypoint reassembly) ──
+          # The entrypoint concatenates server_original.js + src/ routes into server.js on
+          # every container start. By injecting a minimal VAPID guard into the template file
+          # itself, the guard is present even when the entrypoint rebuilds server.js.
+          echo "=== Injecting vapidGuard into server_original.js ==="
+          ORIG_HAS_GUARD=$(docker exec slimpdv-backend grep -c "_vapidGuard" /app/server_original.js 2>/dev/null || echo 0)
+          echo "server_original.js vapidGuard count: $ORIG_HAS_GUARD"
+          if [ "$ORIG_HAS_GUARD" = "0" ]; then
+            docker exec slimpdv-backend node -e "
+              const fs = require('fs');
+              const path = '/app/server_original.js';
+              let code = fs.readFileSync(path, 'utf8');
+              const anchor = 'const app = express()';
+              if (!code.includes(anchor)) { console.log('anchor not found in server_original.js'); process.exit(0); }
+              if (code.includes('_vapidGuard')) { console.log('vapidGuard already present'); process.exit(0); }
+              const guard = '\napp.use(function _vapidGuard(req, res, next) {\n  if (req.method === \"GET\" && (req.path === \"/api/push/vapid-public-key\" || req.path === \"/push/vapid-public-key\")) {\n    return res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || null });\n  }\n  next();\n});\n';
+              const pos = code.indexOf(anchor) + anchor.length;
+              code = code.slice(0, pos) + guard + code.slice(pos);
+              fs.writeFileSync(path, code);
+              console.log('vapidGuard injected into server_original.js (' + code.length + ' bytes)');
+            " 2>&1 || echo "vapidGuard injection into server_original.js failed"
+            # Verify injection
+            docker exec slimpdv-backend grep -c "_vapidGuard" /app/server_original.js 2>/dev/null && echo "CONFIRMED: vapidGuard in server_original.js" || echo "WARN: vapidGuard NOT in server_original.js"
+          else
+            echo "vapidGuard already present in server_original.js — skipping injection"
+          fi
+
           docker restart slimpdv-backend
           sleep 6
 
