@@ -99,8 +99,20 @@ jobs:
           fi
           VAPID_PUB=$(node -e "process.stdout.write(require('/var/www/slimpdv/vapid-keys.json').publicKey)")
           VAPID_PRIV=$(node -e "process.stdout.write(require('/var/www/slimpdv/vapid-keys.json').privateKey)")
-          printf 'services:\n  backend:\n    environment:\n      VAPID_PUBLIC_KEY: "%s"\n      VAPID_PRIVATE_KEY: "%s"\n      VAPID_EMAIL: "mailto:admin@pdvslim.com.br"\n' "$VAPID_PUB" "$VAPID_PRIV" > /var/www/slimpdv/docker-compose.vapid.yml
+          # Ensure server_base.js exists before mounting it into the container
+          if [ ! -f /var/www/slimpdv/server_base.js ] || [ "$(wc -c < /var/www/slimpdv/server_base.js)" -lt 1000 ]; then
+            echo "server_base.js missing/small — will create after patching (first boot uses image server.js)"
+            # Generate override WITHOUT volume mount for first boot
+            printf 'services:\n  backend:\n    environment:\n      VAPID_PUBLIC_KEY: "%s"\n      VAPID_PRIVATE_KEY: "%s"\n      VAPID_EMAIL: "mailto:admin@pdvslim.com.br"\n' "$VAPID_PUB" "$VAPID_PRIV" > /var/www/slimpdv/docker-compose.vapid.yml
+            FIRST_BOOT=1
+          else
+            echo "server_base.js exists ($(wc -c < /var/www/slimpdv/server_base.js) bytes) — will mount as server_patched.js"
+            # Generate override WITH volume mount + command override
+            printf 'services:\n  backend:\n    environment:\n      VAPID_PUBLIC_KEY: "%s"\n      VAPID_PRIVATE_KEY: "%s"\n      VAPID_EMAIL: "mailto:admin@pdvslim.com.br"\n    volumes:\n      - /var/www/slimpdv/server_base.js:/app/server_patched.js\n    command: node server_patched.js\n' "$VAPID_PUB" "$VAPID_PRIV" > /var/www/slimpdv/docker-compose.vapid.yml
+            FIRST_BOOT=0
+          fi
           echo "VAPID public key: ${VAPID_PUB:0:20}..."
+          cat /var/www/slimpdv/docker-compose.vapid.yml
 
           # ── BUILD IMAGES ──────────────────────────────────────────────────────────
           echo "Building backend image (Node.js 20)..."
@@ -180,130 +192,59 @@ jobs:
 
           # ── COPY patched server.js ───────────────────────────────────────────────
           echo "Installing patched server.js..."
-          docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js
-          # NOTE: do NOT overwrite server_original.js — it is a small template that the
-          # entrypoint uses as a header, concatenating src/ routes after it. Replacing it
-          # with the full patched server would duplicate all routes on next restart.
-          echo "Patched server.js installed to /app/server.js only (server_original.js left unchanged)"
-          if docker exec slimpdv-backend test -d /app/dist 2>/dev/null; then
-            docker cp /tmp/server_patched.js slimpdv-backend:/app/dist/server.js
-            echo "Also installed to /app/dist/server.js"
-          fi
-          # Save patched result to host for next deploy (survives container recreation)
+          # Save patched result to HOST (this is the source of truth — mounted into container)
           cp /tmp/server_patched.js /var/www/slimpdv/server_base.js
-          echo "Saved patched server.js to /var/www/slimpdv/server_base.js for next deploy"
+          echo "Saved patched server.js to /var/www/slimpdv/server_base.js ($(wc -c < /var/www/slimpdv/server_base.js) bytes)"
 
-          # ── Neutralize entrypoint so docker restart uses patched server.js ─────────
-          # The entrypoint rebuilds server.js from server_original.js + src/ on every
-          # container start, discarding all our patches. Replace it with a simple passthrough
-          # (exec "$@") so that CMD ["node","server.js"] runs the patched file directly.
-          # We try all common entrypoint paths.
-          echo "=== Neutralizing docker-entrypoint.sh ==="
-          NEUTRALIZED=0
-          for EP_PATH in /docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh /entrypoint.sh /app/entrypoint.sh /usr/local/bin/entrypoint.sh; do
-            if docker exec slimpdv-backend test -f "$EP_PATH" 2>/dev/null; then
-              echo "Found entrypoint at $EP_PATH — showing content:"
-              docker exec slimpdv-backend cat "$EP_PATH" 2>/dev/null || true
-              echo "Replacing with passthrough..."
-              docker exec slimpdv-backend sh -c "printf '#!/bin/sh\nexec \"\$@\"\n' > $EP_PATH && chmod +x $EP_PATH"
-              echo "Entrypoint at $EP_PATH replaced. docker restart will now exec node server.js directly."
-              NEUTRALIZED=1
+          # Also copy into container for immediate use (fallback if volume mount not active)
+          docker cp /tmp/server_patched.js slimpdv-backend:/app/server.js 2>/dev/null || true
+          if docker exec slimpdv-backend test -d /app/dist 2>/dev/null; then
+            docker cp /tmp/server_patched.js slimpdv-backend:/app/dist/server.js 2>/dev/null || true
+          fi
+
+          # ── REGENERATE docker-compose.vapid.yml with volume mount NOW that server_base.js exists ──
+          printf 'services:\n  backend:\n    environment:\n      VAPID_PUBLIC_KEY: "%s"\n      VAPID_PRIVATE_KEY: "%s"\n      VAPID_EMAIL: "mailto:admin@pdvslim.com.br"\n    volumes:\n      - /var/www/slimpdv/server_base.js:/app/server_patched.js\n    command: node server_patched.js\n' "$VAPID_PUB" "$VAPID_PRIV" > /var/www/slimpdv/docker-compose.vapid.yml
+          echo "docker-compose.vapid.yml regenerated with volume mount + command override"
+          cat /var/www/slimpdv/docker-compose.vapid.yml
+
+          # ── RECREATE backend container with volume mount so server_base.js is served directly ─
+          # The container CMD is now "node server_patched.js" where server_patched.js is a
+          # BIND MOUNT from the HOST's /var/www/slimpdv/server_base.js.
+          # This means: NO entrypoint can overwrite it, NO restart can lose the patches.
+          echo "=== Recreating backend with volume mount (server_base.js → server_patched.js) ==="
+          docker compose -f docker-compose.yml -f docker-compose.vapid.yml up -d --force-recreate backend 2>&1 | tail -5
+          # Wait up to 30s for container to be healthy
+          PRE_GUARD=0
+          for i in 1 2 3 4 5 6; do
+            sleep 5
+            if docker exec slimpdv-backend node -e "process.exit(0)" 2>/dev/null; then
+              echo "Container ready (attempt $i)"
               break
+            else
+              echo "Container not ready yet (attempt $i)..."
             fi
           done
-          if [ "$NEUTRALIZED" = "0" ]; then
-            echo "WARNING: No entrypoint script found at common paths — docker restart may rebuild server.js"
-            echo "Searching for entrypoint script..."
-            docker exec slimpdv-backend sh -c "find / -maxdepth 5 -name '*.sh' 2>/dev/null | xargs grep -l 'server_original\|cp.*server' 2>/dev/null | head -5" || true
-          fi
 
-          # Verify the patched file is in the container before restart
-          docker exec slimpdv-backend grep -c "push/vapid" /app/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/server.js" || echo "WARN: push routes not found in /app/server.js"
-          docker exec slimpdv-backend grep -c "push/vapid" /app/dist/server.js 2>/dev/null && echo "VERIFIED: push routes in /app/dist/server.js" || true
+          # Verify the patched file is being served
+          echo "=== Verifying server_patched.js is in use ==="
+          docker inspect slimpdv-backend --format 'CMD: {{json .Config.Cmd}} | Mounts: {{json .Mounts}}' 2>/dev/null | head -c 500 || true
+          docker exec slimpdv-backend node -e "
+            const fs = require('fs');
+            try {
+              const code = fs.readFileSync('/app/server_patched.js', 'utf8');
+              const hasPush = code.includes('push/vapid');
+              const hasHealth = code.includes('/api/health');
+              console.log('server_patched.js size:', code.length, 'bytes | push/vapid:', hasPush, '| /api/health:', hasHealth);
+            } catch(e) { console.log('Cannot read server_patched.js:', e.message); }
+          " 2>/dev/null || echo "(server_patched.js check failed)"
 
-          # ── Inject vapidGuard into server_original.js (survives entrypoint reassembly) ──
-          # The entrypoint concatenates server_original.js + src/ routes into server.js on
-          # every container start. By injecting a minimal VAPID guard into the template file
-          # itself, the guard is present even when the entrypoint rebuilds server.js.
-          echo "=== Injecting vapidGuard into server_original.js ==="
-          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then
-            ORIG_HAS_GUARD=1
-          else
-            ORIG_HAS_GUARD=0
-          fi
-          echo "server_original.js has vapidGuard: $ORIG_HAS_GUARD"
-          if [ "$ORIG_HAS_GUARD" = "0" ]; then
-            docker exec slimpdv-backend node -e "
-              const fs = require('fs');
-              const path = '/app/server_original.js';
-              let code;
-              try { code = fs.readFileSync(path, 'utf8'); } catch(e) { console.log('Cannot read ' + path + ': ' + e.message); process.exit(0); }
-              console.log('server_original.js size:', code.length, 'bytes');
-              console.log('First 200 chars:', JSON.stringify(code.slice(0, 200)));
-              if (code.includes('_vapidGuard')) { console.log('vapidGuard already present'); process.exit(0); }
-              const guard = '\n// VAPID guard — injected by deploy\napp.use(function _vapidGuard(req, res, next) {\n  if (req.method === \"GET\" && (req.path === \"/api/push/vapid-public-key\" || req.path === \"/push/vapid-public-key\")) {\n    return res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || null });\n  }\n  next();\n});\n';
-              const anchors = ['const app = express()', 'var app = express()', 'let app = express()', 'app = express()'];
-              let pos = -1;
-              let usedAnchor = '';
-              for (const a of anchors) {
-                const idx = code.indexOf(a);
-                if (idx !== -1) { pos = idx + a.length; usedAnchor = a; break; }
-              }
-              if (pos === -1) {
-                console.log('No express() anchor found — appending guard to end of file');
-                code = code + guard;
-              } else {
-                console.log('Anchor found: ' + JSON.stringify(usedAnchor));
-                code = code.slice(0, pos) + guard + code.slice(pos);
-              }
-              fs.writeFileSync(path, code);
-              console.log('vapidGuard injected into server_original.js (' + code.length + ' bytes)');
-            " 2>&1 || echo "vapidGuard injection into server_original.js failed"
-            # Verify injection
-            docker exec slimpdv-backend grep -c "_vapidGuard" /app/server_original.js 2>/dev/null && echo "CONFIRMED: vapidGuard in server_original.js" || echo "WARN: vapidGuard NOT in server_original.js"
-          else
-            echo "vapidGuard already present in server_original.js — skipping injection"
-          fi
-
-          # ── Show BEFORE-restart guard state ──────────────────────────────────────
-          echo "=== server_original.js BEFORE restart ==="
-          docker exec slimpdv-backend head -5 /app/server_original.js 2>/dev/null || echo "(cannot read server_original.js)"
-          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then
-            echo "BEFORE-restart: vapidGuard IS in server_original.js"
-            PRE_GUARD=1
-          else
-            echo "BEFORE-restart: vapidGuard NOT in server_original.js"
-            PRE_GUARD=0
-          fi
-
-          docker restart slimpdv-backend
-          # Wait up to 20s for container to be healthy
-          for i in 1 2 3 4; do sleep 5; docker exec slimpdv-backend node -e "process.exit(0)" 2>/dev/null && break || echo "Container not ready yet (attempt $i)..."; done
-
-          # ── CRITICAL: check server.js state AFTER restart ─────────────────────────
-          echo "=== server.js state AFTER docker restart ==="
-          POST_SIZE=$(docker exec slimpdv-backend wc -c < /app/server.js 2>/dev/null || echo 0)
-          if docker exec slimpdv-backend grep -q "push/vapid" /app/server.js 2>/dev/null; then
+          POST_SIZE=$(docker exec slimpdv-backend wc -c < /app/server_patched.js 2>/dev/null || echo 0)
+          if docker exec slimpdv-backend grep -q "push/vapid" /app/server_patched.js 2>/dev/null; then
             POST_PUSH=1
+            echo "GOOD: push routes in server_patched.js ($POST_SIZE bytes)"
           else
             POST_PUSH=0
-          fi
-          echo "server.js size after restart: $POST_SIZE bytes"
-          echo "push/vapid occurrences after restart: $POST_PUSH"
-          echo "server.js first 3 lines after restart:"
-          docker exec slimpdv-backend head -3 /app/server.js 2>/dev/null || true
-          # Show server_original.js state AFTER restart to check if entrypoint overwrites it
-          if docker exec slimpdv-backend grep -q "_vapidGuard" /app/server_original.js 2>/dev/null; then
-            echo "AFTER-restart: vapidGuard IS in server_original.js"
-          else
-            echo "AFTER-restart: vapidGuard NOT in server_original.js"
-          fi
-          if [ "$POST_PUSH" = "0" ]; then
-            echo "CONFIRMED: entrypoint rebuilt server.js and erased push routes after restart"
-            echo "server_original.js content (first 30 lines):"
-            docker exec slimpdv-backend head -30 /app/server_original.js 2>/dev/null || true
-          else
-            echo "GOOD: push routes survived restart"
+            echo "WARN: push routes NOT in server_patched.js"
           fi
 
           # ── NGINX: serve VAPID key directly as static response ───────────────────
