@@ -46,6 +46,118 @@ jobs:
           rsync -az backend/src/ root@72.61.25.92:/var/www/slimpdv/backend/src/ -e "ssh -i ~/.ssh/vps_key"
           scp -i ~/.ssh/vps_key version.json root@72.61.25.92:/var/www/slimpdv/version.json
 
+      - name: Patch PM2 server — CardapioWeb sync-status route
+        run: |
+          ssh -i ~/.ssh/vps_key root@72.61.25.92 'node -e "
+          const fs = require(\"fs\");
+          const path = require(\"path\");
+
+          // Find the running server.js
+          const candidates = [
+            \"/var/www/slimpdv/backend/server.js\",
+            \"/var/www/slimpdv/server.js\",
+          ];
+          let serverPath = null;
+          for (const p of candidates) {
+            if (fs.existsSync(p)) { serverPath = p; break; }
+          }
+          if (!serverPath) { console.log(\"server.js not found — skipping patch\"); process.exit(0); }
+
+          let code = fs.readFileSync(serverPath, \"utf8\");
+
+          // Idempotency check
+          if (code.includes(\"[SyncStatus] Called:\")) {
+            console.log(\"CardapioWeb sync-status patch already applied — skipping\");
+            process.exit(0);
+          }
+
+          const CW_SYNC_ROUTE = \`
+// ── CardapioWeb sync-status (PATCH: added by deploy) ──────────────────────
+app.post(\\\"/api/functions/cardapioweb-sync-status\\\", optionalAuth || authMiddleware, async (req, res) => {
+  try {
+    const { order_id, new_status, cancellation_reason } = req.body || {};
+    console.log(\\\"[SyncStatus] Called: order_id=\\\" + order_id + \\\" new_status=\\\" + new_status);
+    if (!order_id || !new_status) return res.status(400).json({ error: \\\"Missing order_id or new_status\\\" });
+    const orderRes = await pool.query(\\\"SELECT id, external_source, external_order_id, tenant_id FROM orders WHERE id=\\\$1\\\", [order_id]);
+    const order = orderRes.rows[0];
+    if (!order) return res.status(404).json({ error: \\\"Order not found\\\" });
+    if (order.external_source !== \\\"cardapioweb\\\") return res.json({ success: true, message: \\\"Not a CardapioWeb order\\\" });
+    if (!order.external_order_id) return res.json({ success: true, message: \\\"No external order ID\\\" });
+    const intRes = await pool.query(\\\"SELECT api_token FROM cardapioweb_integrations WHERE tenant_id=\\\$1 AND is_active=true LIMIT 1\\\", [order.tenant_id]);
+    const apiToken = intRes.rows[0] && intRes.rows[0].api_token;
+    if (!apiToken) return res.status(400).json({ error: \\\"Integration not configured\\\" });
+    const endpointMap = { preparing: \\\"confirm\\\", ready: \\\"ready\\\", delivered: \\\"finalize\\\", cancelled: \\\"cancel\\\" };
+    const endpoint = endpointMap[new_status];
+    if (!endpoint) return res.json({ success: true, message: \\\"No sync needed for this status\\\" });
+    const apiUrl = \\\"https://integracao.cardapioweb.com/api/partner/v1/orders/\\\" + order.external_order_id + \\\"/\\\" + endpoint;
+    console.log(\\\"[SyncStatus] Calling: \\\" + apiUrl);
+    const body = (endpoint === \\\"cancel\\\" && cancellation_reason) ? JSON.stringify({ cancellation_reason }) : undefined;
+    const apiResp = await fetch(apiUrl, { method: \\\"POST\\\", headers: { \\\"X-API-KEY\\\": apiToken, \\\"Accept\\\": \\\"application/json\\\", \\\"Content-Type\\\": \\\"application/json\\\" }, body });
+    const respText = await apiResp.text();
+    console.log(\\\"[SyncStatus] CardapioWeb response: \\\" + apiResp.status + \\\" \\\" + respText);
+    if (!apiResp.ok) return res.json({ success: false, message: \\\"CardapioWeb returned \\\" + apiResp.status, error: respText });
+    return res.json({ success: true });
+  } catch (err) { console.error(\\\"[SyncStatus] Error:\\\", err.message); return res.status(500).json({ error: err.message }); }
+});
+
+// ── CardapioWeb keep-alive + polling (PATCH: added by deploy) ──────────────
+const _cwSyncedReady = new Set();
+async function pollAndSyncCW() {
+  try {
+    const rows = await pool.query(\\\"SELECT o.id, o.tenant_id FROM orders o WHERE o.external_source=\\\\'cardapioweb\\\\' AND o.status=\\\\'ready\\\\' AND o.ready_at > NOW() - INTERVAL \\\\'5 minutes\\\\'\\\");
+    for (const row of rows.rows) {
+      if (_cwSyncedReady.has(row.id)) continue;
+      _cwSyncedReady.add(row.id);
+      const intRes = await pool.query(\\\"SELECT api_token FROM cardapioweb_integrations WHERE tenant_id=\\\$1 AND is_active=true LIMIT 1\\\", [row.tenant_id]);
+      const apiToken = intRes.rows[0] && intRes.rows[0].api_token;
+      if (!apiToken) continue;
+      const ordRes = await pool.query(\\\"SELECT external_order_id FROM orders WHERE id=\\\$1\\\", [row.id]);
+      const extId = ordRes.rows[0] && ordRes.rows[0].external_order_id;
+      if (!extId) continue;
+      fetch(\\\"https://integracao.cardapioweb.com/api/partner/v1/orders/\\\" + extId + \\\"/ready\\\", { method: \\\"POST\\\", headers: { \\\"X-API-KEY\\\": apiToken, \\\"Accept\\\": \\\"application/json\\\", \\\"Content-Type\\\": \\\"application/json\\\" } })
+        .then(r => console.log(\\\"[Poll-CW] Synced order \\\" + row.id + \\\" status=\\\" + r.status))
+        .catch(e => console.error(\\\"[Poll-CW] Failed:\\\" + e.message));
+    }
+    if (_cwSyncedReady.size > 500) _cwSyncedReady.clear();
+  } catch(e) { if (!String(e.message).includes(\\\"does not exist\\\")) console.error(\\\"[Poll-CW]\\\", e.message); }
+}
+async function keepAliveCW() {
+  try {
+    const rows = await pool.query(\\\"SELECT api_token FROM cardapioweb_integrations WHERE is_active=true\\\");
+    for (const r of rows.rows) {
+      fetch(\\\"https://integracao.cardapioweb.com/api/partner/v1/merchant\\\", { headers: { \\\"X-API-KEY\\\": r.api_token, \\\"Accept\\\": \\\"application/json\\\" } })
+        .then(x => console.log(\\\"[KeepAlive-CW] ping \\\" + x.status)).catch(()=>{});
+    }
+  } catch(e) {}
+}
+if (!global._cwPollStarted) {
+  global._cwPollStarted = true;
+  setInterval(pollAndSyncCW, 30000);
+  setInterval(keepAliveCW, 20 * 60000);
+  setTimeout(pollAndSyncCW, 3000);
+  setTimeout(keepAliveCW, 5000);
+}
+\`;
+
+          // Insert before the first app.listen or app.get(\"/health\") or at the end of the file
+          const anchors = [\"app.listen(\", \"server.listen(\", \"// Start server\", \"module.exports\"];
+          let inserted = false;
+          for (const anchor of anchors) {
+            const idx = code.indexOf(anchor);
+            if (idx !== -1) {
+              code = code.slice(0, idx) + CW_SYNC_ROUTE + \"\\n\" + code.slice(idx);
+              inserted = true;
+              break;
+            }
+          }
+          if (!inserted) { code = code + \"\\n\" + CW_SYNC_ROUTE; }
+
+          fs.writeFileSync(serverPath, code);
+          console.log(\"CardapioWeb sync-status patch applied to \" + serverPath);
+          "'
+          # Reload PM2 so the patch takes effect
+          ssh -i ~/.ssh/vps_key root@72.61.25.92 'pm2 reload slimpdv 2>/dev/null || pm2 reload all 2>/dev/null || echo "PM2 reload skipped"'
+
       - name: Run DB migrations
         run: |
           ssh -i ~/.ssh/vps_key root@72.61.25.92 '
