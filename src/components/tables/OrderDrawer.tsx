@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -175,22 +175,20 @@ export function OrderDrawer({
     }
   };
 
-  if (!open && !productDialogOpen) return null;
-
   return (
     <>
-      <Drawer open={open} onOpenChange={onOpenChange} shouldScaleBackground={false}>
-        <DrawerContent className="h-[85vh] flex flex-col relative">
-          <DrawerHeader className="border-b px-4 py-3 flex-shrink-0">
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="bottom" className="h-[90vh] flex flex-col p-0 rounded-t-xl">
+          <SheetHeader className="border-b px-4 py-3 flex-shrink-0">
             <div className="flex items-center justify-between">
-              <DrawerTitle>
+              <SheetTitle>
                 {tableNumber ? `Adicionar Itens - Mesa ${tableNumber}` : 'Adicionar Itens'}
-              </DrawerTitle>
+              </SheetTitle>
               <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)}>
                 <X className="h-5 w-5" />
               </Button>
             </div>
-          </DrawerHeader>
+          </SheetHeader>
 
           {/* Categories horizontal scroll */}
           <div className="border-b flex-shrink-0 overflow-x-auto">
@@ -294,8 +292,8 @@ export function OrderDrawer({
               </div>
             </button>
           )}
-        </DrawerContent>
-      </Drawer>
+        </SheetContent>
+      </Sheet>
 
       <ProductDetailDialog
         open={productDialogOpen}

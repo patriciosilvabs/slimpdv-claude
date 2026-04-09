@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { usePendingApprovals } from '@/hooks/useApprovalRequest';
 import { useUserRole } from '@/hooks/useUserRole';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,28 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { CheckCircle2, XCircle, Bell, Percent, Trash2, RefreshCw, AlertCircle } from 'lucide-react';
+
+function playApprovalSound() {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const playBeep = (freq: number, start: number, duration: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0, ctx.currentTime + start);
+      gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + start + 0.01);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + start + duration);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + duration + 0.05);
+    };
+    playBeep(880, 0, 0.15);
+    playBeep(1100, 0.2, 0.15);
+    playBeep(880, 0.4, 0.25);
+  } catch (_) {}
+}
 
 const RULE_TYPE_LABELS: Record<string, { label: string; icon: React.ElementType; color: string }> = {
   discount: { label: 'Desconto', icon: Percent, color: 'text-amber-500' },
@@ -39,6 +61,17 @@ export function ManagerApprovalListener() {
   const [open, setOpen] = useState(false);
   const [denyingId, setDenyingId] = useState<string | null>(null);
   const [denyReason, setDenyReason] = useState('');
+  const prevCountRef = useRef(0);
+
+  // Play sound and auto-open dialog when new requests arrive
+  useEffect(() => {
+    const count = pendingRequests.length;
+    if (count > prevCountRef.current) {
+      playApprovalSound();
+      setOpen(true);
+    }
+    prevCountRef.current = count;
+  }, [pendingRequests.length]);
 
   if (!canApprove || pendingRequests.length === 0) return null;
 

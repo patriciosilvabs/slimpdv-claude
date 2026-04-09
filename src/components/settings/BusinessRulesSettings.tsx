@@ -5,7 +5,75 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { useBusinessRules } from '@/hooks/useBusinessRules';
-import { Percent, Trash2, Lock, Clock, Wallet, BarChart3, Shield, Loader2, RefreshCw, Target, CreditCard, Eye } from 'lucide-react';
+import { Percent, Trash2, Lock, Clock, Wallet, BarChart3, Shield, Loader2, RefreshCw, Target, CreditCard, Eye, Users } from 'lucide-react';
+
+const ALL_ROLES = [
+  { value: 'waiter',     label: 'Garçom' },
+  { value: 'cashier',    label: 'Caixa' },
+  { value: 'kitchen',    label: 'Cozinha' },
+  { value: 'kds',        label: 'KDS' },
+  { value: 'supervisor', label: 'Supervisor' },
+  { value: 'gerente',    label: 'Gerente' },
+  { value: 'admin',      label: 'Admin' },
+];
+
+interface RuleRolesProps {
+  label?: string;
+  value: string[];
+  onChange: (roles: string[]) => void;
+}
+
+function RuleRoles({ label = 'Aplicar a', value, onChange }: RuleRolesProps) {
+  const toggle = (role: string) => {
+    if (value.includes(role)) {
+      onChange(value.filter((r) => r !== role));
+    } else {
+      onChange([...value, role]);
+    }
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-muted">
+      <div className="flex items-center gap-2 mb-2">
+        <Users className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium text-muted-foreground">
+          {label} {value.length === 0 ? '(todos os perfis)' : ''}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {ALL_ROLES.map(({ value: role, label: roleLabel }) => {
+          const active = value.includes(role);
+          return (
+            <button
+              key={role}
+              type="button"
+              onClick={() => toggle(role)}
+              className={`px-2.5 py-0.5 rounded-full text-xs font-medium border transition-colors ${
+                active
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-muted text-muted-foreground border-border hover:border-primary/50 hover:text-foreground'
+              }`}
+            >
+              {roleLabel}
+            </button>
+          );
+        })}
+        {value.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="px-2.5 py-0.5 rounded-full text-xs text-muted-foreground hover:text-destructive transition-colors"
+          >
+            limpar
+          </button>
+        )}
+      </div>
+      {value.length === 0 && (
+        <p className="text-[10px] text-muted-foreground mt-1">Nenhum selecionado = regra aplica a todos os perfis</p>
+      )}
+    </div>
+  );
+}
 
 interface RuleToggleProps {
   label: string;
@@ -169,10 +237,24 @@ export function BusinessRulesSettings() {
         <CardContent>
           <RuleToggle
             label="Exigir autorização para cancelar"
-            description="Quando ativo, garçons precisam de aprovação do gerente para cancelar pedidos ou itens. Log de auditoria é sempre registrado."
+            description="Quando ativo, os perfis selecionados precisam de aprovação para cancelar pedidos ou itens."
             checked={rules.require_auth_cancellation}
             onCheckedChange={(v) => updateRule('require_auth_cancellation', v)}
           />
+          {rules.require_auth_cancellation && (
+            <div className="space-y-0 mt-1">
+              <RuleRoles
+                label="Quem precisa de aprovação para cancelar"
+                value={rules.require_auth_cancellation_roles ?? []}
+                onChange={(v) => updateRule('require_auth_cancellation_roles', v)}
+              />
+              <RuleRoles
+                label="Quem pode autorizar o cancelamento"
+                value={rules.require_auth_cancellation_approvers ?? []}
+                onChange={(v) => updateRule('require_auth_cancellation_approvers', v)}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -188,11 +270,18 @@ export function BusinessRulesSettings() {
         <CardContent>
           <RuleToggle
             label="Bloquear edição após envio à cozinha"
-            description="Após o pedido entrar em preparo (status: preparing), não permite edição de itens. Só cancela + refaz."
+            description="Após o pedido entrar em preparo (status: preparing), não permite edição de itens."
             checked={rules.block_edit_after_kitchen}
             onCheckedChange={(v) => updateRule('block_edit_after_kitchen', v)}
             badge="Em breve"
           />
+          {rules.block_edit_after_kitchen && (
+            <RuleRoles
+              label="Perfis bloqueados de editar"
+              value={rules.block_edit_after_kitchen_roles ?? []}
+              onChange={(v) => updateRule('block_edit_after_kitchen_roles', v)}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -214,26 +303,33 @@ export function BusinessRulesSettings() {
             badge="Em breve"
           />
           {rules.business_hours_enabled && (
-            <div className="ml-4 pl-4 border-l-2 border-muted mt-2 flex gap-6">
-              <div className="space-y-1">
-                <Label className="text-xs">Abertura</Label>
-                <Input
-                  type="time"
-                  value={rules.business_hours_open}
-                  onChange={(e) => updateRule('business_hours_open', e.target.value)}
-                  className="w-32 h-8 text-sm"
-                />
+            <>
+              <div className="ml-4 pl-4 border-l-2 border-muted mt-2 flex gap-6">
+                <div className="space-y-1">
+                  <Label className="text-xs">Abertura</Label>
+                  <Input
+                    type="time"
+                    value={rules.business_hours_open}
+                    onChange={(e) => updateRule('business_hours_open', e.target.value)}
+                    className="w-32 h-8 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Fechamento</Label>
+                  <Input
+                    type="time"
+                    value={rules.business_hours_close}
+                    onChange={(e) => updateRule('business_hours_close', e.target.value)}
+                    className="w-32 h-8 text-sm"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Fechamento</Label>
-                <Input
-                  type="time"
-                  value={rules.business_hours_close}
-                  onChange={(e) => updateRule('business_hours_close', e.target.value)}
-                  className="w-32 h-8 text-sm"
-                />
-              </div>
-            </div>
+              <RuleRoles
+                label="Perfis afetados pelo horário"
+                value={rules.business_hours_roles ?? []}
+                onChange={(v) => updateRule('business_hours_roles', v)}
+              />
+            </>
           )}
         </CardContent>
       </Card>
@@ -254,6 +350,20 @@ export function BusinessRulesSettings() {
             checked={rules.require_auth_cash_reopen}
             onCheckedChange={(v) => updateRule('require_auth_cash_reopen', v)}
           />
+          {rules.require_auth_cash_reopen && (
+            <div className="space-y-0 mt-1">
+              <RuleRoles
+                label="Quem precisa de aprovação para abrir caixa"
+                value={rules.require_auth_cash_reopen_roles ?? []}
+                onChange={(v) => updateRule('require_auth_cash_reopen_roles', v)}
+              />
+              <RuleRoles
+                label="Quem pode autorizar a abertura"
+                value={rules.require_auth_cash_reopen_approvers ?? []}
+                onChange={(v) => updateRule('require_auth_cash_reopen_approvers', v)}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -327,6 +437,13 @@ export function BusinessRulesSettings() {
             onCheckedChange={(v) => updateRule('block_below_cost_enabled', v)}
             badge="Em breve"
           />
+          {rules.block_below_cost_enabled && (
+            <RuleRoles
+              label="Perfis bloqueados de vender abaixo do custo"
+              value={rules.block_below_cost_roles ?? []}
+              onChange={(v) => updateRule('block_below_cost_roles', v)}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -365,6 +482,11 @@ export function BusinessRulesSettings() {
                 suffix="% da meta"
                 max={100}
                 min={10}
+              />
+              <RuleRoles
+                label="Perfis com meta de vendas"
+                value={rules.min_sales_target_roles ?? []}
+                onChange={(v) => updateRule('min_sales_target_roles', v)}
               />
             </div>
           )}
@@ -432,6 +554,11 @@ export function BusinessRulesSettings() {
                   />
                 </div>
               </div>
+              <RuleRoles
+                label="Perfis afetados pela restrição"
+                value={rules.payment_restrictions_roles ?? []}
+                onChange={(v) => updateRule('payment_restrictions_roles', v)}
+              />
             </div>
           )}
         </CardContent>

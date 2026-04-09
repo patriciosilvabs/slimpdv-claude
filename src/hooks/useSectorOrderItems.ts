@@ -169,8 +169,8 @@ export function useSectorOrderItems({ sectorId, statuses = ['waiting', 'in_progr
       return items;
     },
     placeholderData: keepPreviousData,
-    staleTime: 1_000,
-    refetchInterval: 15_000,
+    staleTime: 500,
+    refetchInterval: 3_000,
   });
 }
 
@@ -215,8 +215,8 @@ export function useOvenItems() {
     },
     enabled: !!tenantId,
     placeholderData: keepPreviousData,
-    staleTime: 1_000,
-    refetchInterval: 15_000,
+    staleTime: 500,
+    refetchInterval: 3_000,
   });
 }
 

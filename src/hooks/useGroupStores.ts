@@ -22,8 +22,8 @@ export function useGroupStores() {
     id: m.tenant_id,
     name: m.tenant?.name || '',
     slug: m.tenant?.slug || '',
-    is_active: true,
-    created_at: '',
+    is_active: m.tenant?.is_active !== false,
+    created_at: m.tenant?.created_at || '',
     owner_id: '',
   }));
 

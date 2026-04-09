@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide scrollbar but allow scrolling (for tab overflow on mobile) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Safe area bottom padding for notched phones */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Dynamic viewport height */
+.h-dvh { height: 100dvh; }
+.min-h-dvh { min-height: 100dvh; }
+
+@keyframes gentlePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 168, 204, 0.4), 0 20px 40px -12px rgba(0, 168, 204, 0.4); }
+  50%       { box-shadow: 0 0 0 8px rgba(0, 168, 204, 0),  0 20px 40px -12px rgba(0, 168, 204, 0.4); }
+}
+
 /* PDV Design System - Pizzaria/Hamburgueria Theme */
 
 @layer base {

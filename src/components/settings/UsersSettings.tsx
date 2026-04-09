@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -19,10 +20,11 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useAllUsers, AppRole, UserWithRoles } from '@/hooks/useUserRole';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { client as apiClient } from '@/integrations/api/client';
 import { useTenant } from '@/hooks/useTenant';
+import { useTenantContext } from '@/contexts/TenantContext';
 import { useQueryClient } from '@tanstack/react-query';
-import { Users, UserPlus, Edit, X, Eye, EyeOff, Key, Trash2 } from 'lucide-react';
+import { Users, UserPlus, Edit, X, Eye, EyeOff, Key, Trash2, Building2 } from 'lucide-react';
 import { UserPermissionsDialog } from '@/components/settings/UserPermissionsDialog';
 
 const roleLabels: Record<AppRole, string> = {
@@ -50,6 +52,7 @@ export function UsersSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { tenantId } = useTenant();
+  const { allTenants } = useTenantContext();
 
   // User creation state
   const [isCreateUserDialogOpen, setIsCreateUserDialogOpen] = useState(false);
@@ -61,6 +64,7 @@ export function UsersSettings() {
     password: '',
     role: 'waiter' as AppRole,
   });
+  const [newUserTenantIds, setNewUserTenantIds] = useState<string[]>([]);
 
   // Edit user state
   const [isEditUserDialogOpen, setIsEditUserDialogOpen] = useState(false);
@@ -68,6 +72,8 @@ export function UsersSettings() {
   const [editUserName, setEditUserName] = useState('');
   const [editUserEmail, setEditUserEmail] = useState('');
   const [editUserPassword, setEditUserPassword] = useState('');
+  const [editUserRole, setEditUserRole] = useState<AppRole | ''>('');
+  const [editUserTenantIds, setEditUserTenantIds] = useState<string[]>([]);
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
 
@@ -80,75 +86,69 @@ export function UsersSettings() {
   const [isPermissionsDialogOpen, setIsPermissionsDialogOpen] = useState(false);
   const [userForPermissions, setUserForPermissions] = useState<UserWithRoles | null>(null);
 
+  // Initialize new user tenant selection to current tenant
+  useEffect(() => {
+    if (isCreateUserDialogOpen && tenantId) {
+      setNewUserTenantIds([tenantId]);
+    }
+  }, [isCreateUserDialogOpen, tenantId]);
+
   const handleRemoveRole = async (userId: string, role: AppRole) => {
     try {
-      const { error } = await supabase
-        .from('user_roles')
-        .delete()
-        .eq('user_id', userId)
-        .eq('role', role);
-      
-      if (error) throw error;
-      
+      await apiClient.delete('/user-roles', { userId, role });
       toast({ title: 'Função removida!' });
       refetch();
       queryClient.invalidateQueries({ queryKey: ['user-roles'] });
       queryClient.invalidateQueries({ queryKey: ['has-admins'] });
     } catch (error: any) {
-      toast({ 
-        title: 'Erro ao remover função', 
-        description: error.message, 
-        variant: 'destructive' 
+      toast({
+        title: 'Erro ao remover função',
+        description: error.message,
+        variant: 'destructive'
       });
     }
   };
 
-  const handleOpenEditUser = (user: UserWithRoles) => {
+  const handleOpenEditUser = async (user: UserWithRoles) => {
     setUserToEdit(user);
     setEditUserName(user.name);
-    setEditUserEmail('');
+    setEditUserEmail(user.email || '');
     setEditUserPassword('');
+    setEditUserRole(user.user_roles[0]?.role || '');
     setShowEditPassword(false);
+    // Load user's current tenant memberships
+    try {
+      const res = await apiClient.get<{ tenants: { tenant_id: string }[] }>(`/user-tenants/${user.id}`);
+      setEditUserTenantIds(res.tenants.map(t => t.tenant_id));
+    } catch {
+      setEditUserTenantIds(tenantId ? [tenantId] : []);
+    }
     setIsEditUserDialogOpen(true);
   };
 
   const handleUpdateUser = async () => {
     if (!userToEdit) return;
-    
+
     setIsSavingUser(true);
     try {
-      // Se tem email ou senha, usar Edge Function
-      if (editUserEmail || editUserPassword) {
-        const { data, error } = await supabase.functions.invoke('admin-update-user', {
-          body: { 
-            userId: userToEdit.id,
-            name: editUserName.trim(),
-            email: editUserEmail.trim() || undefined,
-            password: editUserPassword || undefined
-          }
-        });
+      await apiClient.post('/functions/admin-update-user', {
+        userId: userToEdit.id,
+        name: editUserName.trim(),
+        email: editUserEmail.trim() || undefined,
+        password: editUserPassword || undefined,
+        role: editUserRole || undefined,
+        tenant_ids: editUserTenantIds,
+      });
 
-        if (error) throw error;
-        if (data.error) throw new Error(data.error);
-      } else {
-        // Só atualizar nome no perfil
-        const { error } = await supabase
-          .from('profiles')
-          .update({ name: editUserName.trim().toUpperCase() })
-          .eq('id', userToEdit.id);
-        
-        if (error) throw error;
-      }
-      
       toast({ title: 'Usuário atualizado com sucesso!' });
       refetch();
       setIsEditUserDialogOpen(false);
       setUserToEdit(null);
     } catch (error: any) {
-      toast({ 
-        title: 'Erro ao atualizar usuário', 
-        description: error.message, 
-        variant: 'destructive' 
+      toast({
+        title: 'Erro ao atualizar usuário',
+        description: error.message,
+        variant: 'destructive'
       });
     } finally {
       setIsSavingUser(false);
@@ -162,25 +162,20 @@ export function UsersSettings() {
 
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
-    
+
     setIsDeletingUser(true);
     try {
-      const { data, error } = await supabase.functions.invoke('admin-delete-user', {
-        body: { userId: userToDelete.id }
-      });
+      await apiClient.post('/functions/admin-delete-user', { userId: userToDelete.id });
 
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
-      
       toast({ title: 'Usuário excluído com sucesso!' });
       refetch();
       queryClient.invalidateQueries({ queryKey: ['all-users'] });
       queryClient.invalidateQueries({ queryKey: ['has-admins'] });
     } catch (error: any) {
-      toast({ 
-        title: 'Erro ao excluir usuário', 
-        description: error.message, 
-        variant: 'destructive' 
+      toast({
+        title: 'Erro ao excluir usuário',
+        description: error.message,
+        variant: 'destructive'
       });
     } finally {
       setIsDeletingUser(false);
@@ -191,10 +186,7 @@ export function UsersSettings() {
 
   const handleCreateUser = async () => {
     if (!newUserForm.email || !newUserForm.name || !newUserForm.password || !newUserForm.role) {
-      toast({
-        title: 'Preencha todos os campos',
-        variant: 'destructive'
-      });
+      toast({ title: 'Preencha todos os campos', variant: 'destructive' });
       return;
     }
 
@@ -207,28 +199,30 @@ export function UsersSettings() {
       return;
     }
 
+    if (newUserTenantIds.length === 0) {
+      toast({ title: 'Selecione pelo menos uma loja', variant: 'destructive' });
+      return;
+    }
+
     setIsCreatingUser(true);
     try {
-      const { data, error } = await supabase.functions.invoke('create-user', {
-        body: {
-          email: newUserForm.email,
-          name: newUserForm.name.toUpperCase(),
-          password: newUserForm.password,
-          role: newUserForm.role,
-          tenant_id: tenantId
-        }
+      await apiClient.post('/functions/create-user', {
+        email: newUserForm.email,
+        name: newUserForm.name.toUpperCase(),
+        password: newUserForm.password,
+        role: newUserForm.role,
+        tenant_id: tenantId,
+        tenant_ids: newUserTenantIds,
       });
 
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
-
-      toast({ 
+      toast({
         title: 'Usuário criado com sucesso!',
         description: `${newUserForm.name} foi adicionado como ${roleLabels[newUserForm.role]}`
       });
-      
+
       setIsCreateUserDialogOpen(false);
       setNewUserForm({ email: '', name: '', password: '', role: 'waiter' });
+      setNewUserTenantIds([]);
       refetch();
       queryClient.invalidateQueries({ queryKey: ['all-users'] });
     } catch (error: any) {
@@ -245,6 +239,53 @@ export function UsersSettings() {
   const handleOpenPermissions = (user: UserWithRoles) => {
     setUserForPermissions(user);
     setIsPermissionsDialogOpen(true);
+  };
+
+  const toggleTenantId = (id: string, current: string[], setter: (v: string[]) => void) => {
+    if (current.includes(id)) {
+      setter(current.filter(t => t !== id));
+    } else {
+      setter([...current, id]);
+    }
+  };
+
+  const StoreSelector = ({
+    selectedIds,
+    onChange,
+  }: {
+    selectedIds: string[];
+    onChange: (ids: string[]) => void;
+  }) => {
+    if (allTenants.length <= 1) return null;
+    return (
+      <div className="space-y-2">
+        <Label className="flex items-center gap-2">
+          <Building2 className="h-4 w-4" />
+          Lojas com acesso
+        </Label>
+        <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+          {allTenants.map((m) => {
+            const id = m.tenant_id;
+            const name = m.tenant?.name || id;
+            return (
+              <label key={id} className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={selectedIds.includes(id)}
+                  onCheckedChange={() => toggleTenantId(id, selectedIds, onChange)}
+                />
+                <span className="text-sm">{name}</span>
+                {id === tenantId && (
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">atual</Badge>
+                )}
+              </label>
+            );
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          O usuário terá acesso apenas às lojas selecionadas.
+        </p>
+      </div>
+    );
   };
 
   return (
@@ -300,8 +341,8 @@ export function UsersSettings() {
                           <span className="text-muted-foreground text-sm">Sem função</span>
                         ) : (
                           user.user_roles.map((r) => (
-                            <Badge 
-                              key={r.role} 
+                            <Badge
+                              key={r.role}
                               className={`${roleColors[r.role]} flex items-center gap-1`}
                             >
                               {roleLabels[r.role]}
@@ -355,7 +396,7 @@ export function UsersSettings() {
 
       {/* Edit User Dialog */}
       <Dialog open={isEditUserDialogOpen} onOpenChange={setIsEditUserDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Usuário</DialogTitle>
           </DialogHeader>
@@ -369,22 +410,47 @@ export function UsersSettings() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Email (opcional - deixe vazio para manter)</Label>
+              <Label>Email</Label>
               <Input
+                readOnly
+                onFocus={(e) => (e.target as HTMLInputElement).removeAttribute('readonly')}
                 type="email"
                 value={editUserEmail}
                 onChange={(e) => setEditUserEmail(e.target.value)}
-                placeholder="Novo email"
+                placeholder="email@exemplo.com"
+                autoComplete="off"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Função Principal</Label>
+              <Select
+                value={editUserRole}
+                onValueChange={(v) => setEditUserRole(v as AppRole)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione uma função" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(roleLabels) as AppRole[]).map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {roleLabels[role]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <StoreSelector selectedIds={editUserTenantIds} onChange={setEditUserTenantIds} />
             <div className="space-y-2">
               <Label>Nova Senha (opcional - deixe vazio para manter)</Label>
               <div className="relative">
                 <Input
+                  readOnly
+                  onFocus={(e) => (e.target as HTMLInputElement).removeAttribute('readonly')}
                   type={showEditPassword ? 'text' : 'password'}
                   value={editUserPassword}
                   onChange={(e) => setEditUserPassword(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Deixe vazio para manter a senha atual"
+                  autoComplete="new-password"
                 />
                 <Button
                   type="button"
@@ -405,8 +471,8 @@ export function UsersSettings() {
             <Button variant="outline" onClick={() => setIsEditUserDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button 
-              onClick={handleUpdateUser} 
+            <Button
+              onClick={handleUpdateUser}
               disabled={isSavingUser || (editUserPassword.length > 0 && editUserPassword.length < 6)}
             >
               {isSavingUser ? 'Salvando...' : 'Salvar'}
@@ -441,7 +507,7 @@ export function UsersSettings() {
 
       {/* Create User Dialog */}
       <Dialog open={isCreateUserDialogOpen} onOpenChange={setIsCreateUserDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5" />
@@ -504,6 +570,7 @@ export function UsersSettings() {
                 </SelectContent>
               </Select>
             </div>
+            <StoreSelector selectedIds={newUserTenantIds} onChange={setNewUserTenantIds} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateUserDialogOpen(false)}>

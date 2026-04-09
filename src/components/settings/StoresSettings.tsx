@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useGroupStores } from '@/hooks/useGroupStores';
 import { useTenant } from '@/hooks/useTenant';
-import { Building2, Plus, ExternalLink, Check, Settings, Copy, Link2, Globe, Share2 } from 'lucide-react';
+import { Building2, Plus, ExternalLink, Check, Settings, Copy, Link2, Globe, Share2, Trash2 } from 'lucide-react';
 import { useTenantContext } from '@/contexts/TenantContext';
+import { client as apiClient } from '@/integrations/api/client';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { StoreConfigModal } from './StoreConfigModal';
 
@@ -14,7 +16,9 @@ export function StoresSettings() {
   const navigate = useNavigate();
   const { tenantId } = useTenant();
   const [configStore, setConfigStore] = useState<{ id: string; name: string; slug: string; created_at: string; is_active?: boolean } | null>(null);
-  const { setActiveTenant } = useTenantContext();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const { setActiveTenant, refreshTenants } = useTenantContext();
+  const queryClient = useQueryClient();
   const { stores, isLoading, isOwnerOfGroup } = useGroupStores();
 
   const handleCreateStore = () => {
@@ -45,6 +49,21 @@ export function StoresSettings() {
       document.execCommand('copy');
       document.body.removeChild(textArea);
       toast.success('Link copiado!');
+    }
+  };
+
+  const handleDeleteStore = async (storeId: string, storeName: string) => {
+    if (!confirm(`Tem certeza que deseja excluir a loja "${storeName}"? Esta ação não pode ser desfeita.`)) return;
+    setDeletingId(storeId);
+    try {
+      await apiClient.delete(`/tenants/${storeId}`);
+      toast.success('Loja excluída com sucesso!');
+      await refreshTenants();
+      queryClient.invalidateQueries({ queryKey: ['all-tenant-memberships'] });
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao excluir loja');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -216,7 +235,7 @@ export function StoresSettings() {
                 </div>
 
                 {/* Store actions */}
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex items-center gap-2 pt-1 flex-wrap">
                   {isCurrentStore ? (
                     <Button
                       variant="outline"
@@ -228,15 +247,29 @@ export function StoresSettings() {
                       Configurações
                     </Button>
                   ) : (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleSwitchToStore(store.id)}
-                      className="gap-2"
-                    >
-                      <Link2 className="h-4 w-4" />
-                      Acessar Loja
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSwitchToStore(store.id)}
+                        className="gap-2"
+                      >
+                        <Link2 className="h-4 w-4" />
+                        Acessar Loja
+                      </Button>
+                      {isOwnerOfGroup && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDeleteStore(store.id, store.name)}
+                          disabled={deletingId === store.id}
+                          className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {deletingId === store.id ? 'Excluindo...' : 'Excluir'}
+                        </Button>
+                      )}
+                    </>
                   )}
                 </div>
               </CardContent>

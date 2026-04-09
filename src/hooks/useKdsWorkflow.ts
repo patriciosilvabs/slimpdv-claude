@@ -26,7 +26,7 @@ interface OrderData {
 
 export function useKdsWorkflow() {
   const queryClient = useQueryClient();
-  const { activeStations, getNextStation, orderStatusStation, orderStatusStations, isLastProductionStation, productionStations } = useKdsStations();
+  const { activeStations, getNextStation, orderStatusStation, orderStatusStations, waiterServeStation, isLastProductionStation, productionStations } = useKdsStations();
   const { logAction } = useKdsStationLogs();
   const { settings } = useKdsSettings();
   const { user } = useAuth();
@@ -70,6 +70,9 @@ export function useKdsWorkflow() {
     // ORDER_STATUS routing: depends on order_type
     if (currentStation.station_type === 'order_status') {
       if (orderType === 'dine_in') {
+        // Para mesa: se existe estação de garçom, vai para lá
+        if (waiterServeStation) return { id: waiterServeStation.id, type: 'waiter_serve' };
+        // Senão, próxima order_status
         const nextOrderStatus = orderStatusStations
           ?.filter(s => s.is_active && (s.sort_order ?? 0) > (currentStation.sort_order ?? 0))
           .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
@@ -78,12 +81,16 @@ export function useKdsWorkflow() {
       return null;
     }
 
+    // WAITER_SERVE: itens servidos aqui são finalizados (sem próxima estação)
+    if (currentStation.station_type === 'waiter_serve') return null;
+
     // SMART mode: special routing by station_type
     if (routingMode === 'smart') {
       if (currentStation.station_type === 'prep_start' || currentStation.is_edge_sector) {
         const prepId = await findLeastBusyPrepStation();
         if (prepId) return { id: prepId, type: 'item_assembly' };
         if (orderStatusStation) return { id: orderStatusStation.id, type: 'order_status' };
+        if (waiterServeStation && orderType === 'dine_in') return { id: waiterServeStation.id, type: 'waiter_serve' };
         return null;
       }
       if (currentStation.station_type === 'item_assembly') {
@@ -91,6 +98,7 @@ export function useKdsWorkflow() {
         const next = getNextStation(currentStationId);
         if (next) return { id: next.id, type: next.station_type };
         if (orderStatusStation) return { id: orderStatusStation.id, type: 'order_status' };
+        if (waiterServeStation && orderType === 'dine_in') return { id: waiterServeStation.id, type: 'waiter_serve' };
         return null;
       }
     }
@@ -99,8 +107,12 @@ export function useKdsWorkflow() {
     const next = getNextStation(currentStationId);
     if (next) return { id: next.id, type: next.station_type };
 
-    // Last production station → order_status or done
+    // Last production station → order_status, then waiter_serve (dine_in), or done
     if (orderStatusStation) return { id: orderStatusStation.id, type: 'order_status' };
+    // Sem order_status: pedidos de mesa vão direto para o garçom
+    if (waiterServeStation && orderType === 'dine_in') {
+      return { id: waiterServeStation.id, type: 'waiter_serve' };
+    }
     return null;
   };
 
@@ -202,17 +214,29 @@ export function useKdsWorkflow() {
       let targetStationId: string | null = null;
       
       if (currentStation?.station_type === 'order_status') {
-        // For order_status stations, only dine_in goes to next order_status
+        // For order_status stations: dine_in → waiter_serve or next order_status
         if (orderType === 'dine_in') {
-          const nextOrderStatus = orderStatusStations
-            ?.filter(s => s.is_active && (s.sort_order ?? 0) > (currentStation.sort_order ?? 0))
-            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
-          targetStationId = nextOrderStatus?.id || null;
+          if (waiterServeStation) {
+            targetStationId = waiterServeStation.id;
+          } else {
+            const nextOrderStatus = orderStatusStations
+              ?.filter(s => s.is_active && (s.sort_order ?? 0) > ((currentStation.sort_order ?? 0)))
+              .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
+            targetStationId = nextOrderStatus?.id || null;
+          }
         }
         // delivery/takeaway → null (done)
       } else {
         const nextStation = getNextStation(currentStationId);
-        targetStationId = nextStation?.id || orderStatusStation?.id || null;
+        if (nextStation) {
+          targetStationId = nextStation.id;
+        } else if (orderStatusStation) {
+          targetStationId = orderStatusStation.id;
+        } else if (waiterServeStation && orderType === 'dine_in') {
+          targetStationId = waiterServeStation.id;
+        } else {
+          targetStationId = null;
+        }
       }
       
       queryClient.setQueryData(['orders'], (old: OrderData[] | undefined) => {
@@ -348,7 +372,14 @@ export function useKdsWorkflow() {
           .eq('id', itemId)
           .single();
 
-        // Se tiver estação de status do pedido, mover o item para lá
+        // Determinar próximo destino: order_status → waiter_serve (dine_in) → done
+        const { data: itemOrderData } = await supabase
+          .from('order_items')
+          .select('order_id, order:orders(order_type)')
+          .eq('id', itemId)
+          .single();
+        const itemOrderType = (itemOrderData?.order as { order_type?: string } | null)?.order_type;
+
         if (orderStatusStation) {
           const { error } = await supabase
             .from('order_items')
@@ -362,14 +393,32 @@ export function useKdsWorkflow() {
 
           if (error) throw error;
 
-          // Log fire-and-forget
           logAction.mutateAsync({
             orderItemId: itemId,
             stationId: orderStatusStation.id,
             action: 'entered',
           }).catch(() => {});
+        } else if (waiterServeStation && itemOrderType === 'dine_in') {
+          // Sem order_status mas existe garçom: pedidos de mesa vão para passa-prato
+          const { error } = await supabase
+            .from('order_items')
+            .update({
+              current_station_id: waiterServeStation.id,
+              station_status: 'waiting',
+              station_started_at: null,
+              station_completed_at: now,
+            })
+            .eq('id', itemId);
+
+          if (error) throw error;
+
+          logAction.mutateAsync({
+            orderItemId: itemId,
+            stationId: waiterServeStation.id,
+            action: 'entered',
+          }).catch(() => {});
         } else {
-          // Sem estação de status - marcar item como done diretamente
+          // Sem estação de status nem garçom - marcar item como done diretamente
           const { error } = await supabase
             .from('order_items')
             .update({
@@ -540,16 +589,16 @@ export function useKdsWorkflow() {
     mutationFn: async ({ orderId, orderType, currentStationId }: { orderId: string; orderType?: string; currentStationId?: string }) => {
       const now = new Date().toISOString();
 
-      // Se for dine_in, verificar se existe próxima estação order_status
+      // Para dine_in: rotear para waiter_serve ou próxima order_status
       if (orderType === 'dine_in' && currentStationId) {
         const currentStation = activeStations.find(s => s.id === currentStationId);
         if (currentStation) {
-          const nextOrderStatus = orderStatusStations
+          // Prioridade: estação do garçom (passa-prato)
+          const targetStation = waiterServeStation || orderStatusStations
             ?.filter(s => s.is_active && s.station_type === 'order_status' && (s.sort_order ?? 0) > (currentStation.sort_order ?? 0))
             .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
 
-          if (nextOrderStatus) {
-            // Mover todos os itens para a próxima estação order_status
+          if (targetStation) {
             const { data: items, error: fetchError } = await supabase
               .from('order_items')
               .select('id, current_station_id')
@@ -559,31 +608,16 @@ export function useKdsWorkflow() {
 
             await Promise.all((items || []).map(async (item) => {
               if (item.current_station_id) {
-                logAction.mutateAsync({
-                  orderItemId: item.id,
-                  stationId: item.current_station_id,
-                  action: 'completed',
-                }).catch(() => {});
+                logAction.mutateAsync({ orderItemId: item.id, stationId: item.current_station_id, action: 'completed' }).catch(() => {});
               }
-
               await supabase
                 .from('order_items')
-                .update({
-                  current_station_id: nextOrderStatus.id,
-                  station_status: 'waiting',
-                  station_started_at: null,
-                  station_completed_at: now,
-                })
+                .update({ current_station_id: targetStation.id, station_status: 'waiting', station_started_at: null, station_completed_at: now })
                 .eq('id', item.id);
-
-              logAction.mutateAsync({
-                orderItemId: item.id,
-                stationId: nextOrderStatus.id,
-                action: 'entered',
-              }).catch(() => {});
+              logAction.mutateAsync({ orderItemId: item.id, stationId: targetStation.id, action: 'entered' }).catch(() => {});
             }));
 
-            return { orderId, movedToStation: nextOrderStatus.name };
+            return { orderId, movedToStation: targetStation.name };
           }
         }
       }
@@ -641,6 +675,75 @@ export function useKdsWorkflow() {
     onError: (error) => {
       toast.error('Erro ao finalizar pedido');
       console.error(error);
+    },
+  });
+
+  // Servir item no passa-prato (garçom confirma entrega na mesa)
+  const serveFromWaiterStation = useMutation({
+    mutationFn: async ({ itemId, stationId }: { itemId: string; stationId: string }) => {
+      const now = new Date().toISOString();
+
+      const { error } = await supabase
+        .from('order_items')
+        .update({ served_at: now, current_station_id: null, station_status: 'done', station_completed_at: now })
+        .eq('id', itemId);
+
+      if (error) throw error;
+
+      logAction.mutateAsync({ orderItemId: itemId, stationId, action: 'completed', notes: 'Servido pelo garçom' }).catch(() => {});
+
+      // Verificar se todos os itens foram servidos → marcar pedido como 'ready'
+      // (NÃO 'delivered' — pedido permanece visível até pagamento no caixa)
+      const { data: itemData } = await supabase
+        .from('order_items')
+        .select('order_id')
+        .eq('id', itemId)
+        .single();
+
+      if (itemData?.order_id) {
+        const { data: allItems } = await supabase
+          .from('order_items')
+          .select('station_status, served_at, cancelled_at')
+          .eq('order_id', itemData.order_id);
+
+        const allDone = allItems?.every(i =>
+          i.cancelled_at || i.station_status === 'done' || !!i.served_at
+        );
+        if (allDone) {
+          await supabase.from('orders')
+            .update({ status: 'ready', ready_at: now })
+            .eq('id', itemData.order_id);
+        }
+      }
+
+      return { itemId };
+    },
+    onMutate: (vars) => {
+      markItemAsRecentlyMoved(vars.itemId);
+      queryClient.cancelQueries({ queryKey: ['orders'] });
+      const prev = queryClient.getQueryData(['orders']);
+      queryClient.setQueryData(['orders'], (old: OrderData[] | undefined) => {
+        if (!Array.isArray(old)) return old;
+        return old.map(o => ({
+          ...o,
+          order_items: o.order_items?.map((item: OrderItem) =>
+            item.id === vars.itemId
+              ? { ...item, served_at: new Date().toISOString(), current_station_id: null, station_status: 'done' }
+              : item
+          ) || [],
+        }));
+      });
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(['orders'], ctx.prev);
+      toast.error('Erro ao servir item');
+      console.error(err);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['sector-order-items'] });
+      queryClient.invalidateQueries({ queryKey: ['kds-device-data'] });
     },
   });
 
@@ -719,6 +822,7 @@ export function useKdsWorkflow() {
     initializeOrderForProductionLine,
     finalizeOrderFromStatus,
     serveItem,
+    serveFromWaiterStation,
     getItemsByStation,
     getWaitingItems,
     orderStatusStation,

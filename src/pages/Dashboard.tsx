@@ -4,6 +4,7 @@ import { useDashboardStats, useTopProducts, useSalesChart, useTopWaiters } from 
 import { useMonthlyRevenue } from '@/hooks/useMonthlyRevenue';
 import { useOrders } from '@/hooks/useOrders';
 import { useUserPermissions } from '@/hooks/useUserPermissions';
+import { useUserRole } from '@/hooks/useUserRole';
 import { AccessDenied } from '@/components/auth/AccessDenied';
 import { DollarSign, ShoppingBag, Users, AlertTriangle, TrendingUp, TrendingDown, Award } from 'lucide-react';
 import { APP_VERSION } from '@/lib/appVersion';
@@ -16,6 +17,7 @@ function formatCurrency(value: number) {
 export default function Dashboard() {
   // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURN
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
+  const { isAdmin, isGerente, isSupervisor } = useUserRole();
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
   const { data: topProducts } = useTopProducts(7);
   const { data: salesChart } = useSalesChart(7);
@@ -28,7 +30,9 @@ export default function Dashboard() {
   const monthVariation = currentMonthData?.variation || 0;
 
   // Permission check AFTER all hooks
-  if (!permissionsLoading && !hasPermission('dashboard_view')) {
+  // Admin, gerente and supervisor always have dashboard access
+  const canViewDashboard = isAdmin || isGerente || isSupervisor || hasPermission('dashboard_view');
+  if (!permissionsLoading && !canViewDashboard) {
     return <AccessDenied permission="dashboard_view" />;
   }
 

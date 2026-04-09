@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { client as apiClient } from '@/integrations/api/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTenant } from '@/hooks/useTenant';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -37,21 +37,11 @@ export function useRequestApproval() {
       rule_type: ApprovalRuleType;
       context: Record<string, unknown>;
     }): Promise<ApprovalRequest> => {
-      const { data, error } = await (supabase as any)
-        .from('approval_requests')
-        .insert({
-          tenant_id: tenantId,
-          rule_type,
-          context,
-          requested_by_id: user?.id || 'unknown',
-          requested_by_name: user?.email?.split('@')[0] || 'Operador',
-          status: 'pending',
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data as ApprovalRequest;
+      const data = await apiClient.post<ApprovalRequest>('/approval-requests', {
+        rule_type,
+        context,
+      });
+      return data;
     },
   });
 
@@ -62,13 +52,8 @@ export function useRequestApproval() {
       queryKey: ['approval-request', requestId],
       queryFn: async () => {
         if (!requestId) return null;
-        const { data, error } = await (supabase as any)
-          .from('approval_requests')
-          .select('*')
-          .eq('id', requestId)
-          .single();
-        if (error) throw error;
-        return data as ApprovalRequest;
+        const data = await apiClient.get<ApprovalRequest>(`/approval-requests/${requestId}`);
+        return data;
       },
       enabled: !!requestId,
       refetchInterval: 2000,
@@ -106,18 +91,9 @@ export function usePendingApprovals() {
     queryKey: ['approval-requests-pending', tenantId],
     queryFn: async () => {
       if (!tenantId || !canApprove) return [];
-      const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-      const { data, error } = await (supabase as any)
-        .from('approval_requests')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .eq('status', 'pending')
-        .gte('created_at', since)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
+      const data = await apiClient.get<ApprovalRequest[]>('/approval-requests?status=pending');
       // Filter to only show requests this user can actually approve
-      const all = (data || []) as ApprovalRequest[];
-      return all.filter(r => canApproveRuleType(r.rule_type));
+      return (data || []).filter(r => canApproveRuleType(r.rule_type));
     },
     enabled: !!tenantId && canApprove,
     refetchInterval: 3000, // poll every 3 seconds
@@ -125,16 +101,9 @@ export function usePendingApprovals() {
 
   const approveRequest = useMutation({
     mutationFn: async (requestId: string) => {
-      const { error } = await (supabase as any)
-        .from('approval_requests')
-        .update({
-          status: 'approved',
-          approved_by_id: user?.id || 'unknown',
-          approved_by_name: user?.email?.split('@')[0] || 'Gerente',
-          resolved_at: new Date().toISOString(),
-        })
-        .eq('id', requestId);
-      if (error) throw error;
+      await apiClient.patch(`/approval-requests/${requestId}`, {
+        status: 'approved',
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approval-requests-pending', tenantId] });
@@ -144,17 +113,10 @@ export function usePendingApprovals() {
 
   const denyRequest = useMutation({
     mutationFn: async ({ requestId, reason }: { requestId: string; reason?: string }) => {
-      const { error } = await (supabase as any)
-        .from('approval_requests')
-        .update({
-          status: 'denied',
-          approved_by_id: user?.id || 'unknown',
-          approved_by_name: user?.email?.split('@')[0] || 'Gerente',
-          denial_reason: reason || 'Negado pelo gerente',
-          resolved_at: new Date().toISOString(),
-        })
-        .eq('id', requestId);
-      if (error) throw error;
+      await apiClient.patch(`/approval-requests/${requestId}`, {
+        status: 'denied',
+        denial_reason: reason || 'Negado pelo gerente',
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approval-requests-pending', tenantId] });

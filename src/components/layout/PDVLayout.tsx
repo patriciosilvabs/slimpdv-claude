@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useLocation, Navigate } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole, AppRole } from '@/hooks/useUserRole';
 import { useUserPermissions, PermissionCode } from '@/hooks/useUserPermissions';
@@ -12,16 +12,18 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { PrinterStatusIndicator } from '@/components/PrinterStatusIndicator';
 import { TenantSwitcher } from '@/components/TenantSwitcher';
-import { Loader2, LayoutDashboard, UtensilsCrossed, ShoppingBag, Package, CreditCard, BarChart3, Settings, LogOut, Menu, X, Store, Users, Kanban, ChefHat, History, Target, UserCircle, Pizza, RotateCcw, Shield, Ban, Crown, Factory, Truck, ExternalLink } from 'lucide-react';
+import { Loader2, LayoutDashboard, UtensilsCrossed, ShoppingBag, Package, CreditCard, BarChart3, Settings, LogOut, Menu, X, Store, Users, Kanban, ChefHat, History, Target, UserCircle, Pizza, RotateCcw, Shield, Ban, Crown, Factory, Truck, ExternalLink, Home, Search } from 'lucide-react';
 import logoSlim from '@/assets/logo-slim.png';
 import { APP_VERSION } from '@/lib/appVersion';
 import { AppFooter } from '@/components/layout/AppFooter';
 import { ManagerApprovalListener } from '@/components/ManagerApprovalListener';
 import { OperatorTargetWidget } from '@/components/OperatorTargetWidget';
 import { PwaInstallBanner } from '@/components/PwaInstallBanner';
+import { TrialBanner } from '@/components/TrialBanner';
 
 interface NavItem {
   name: string;
@@ -68,14 +70,42 @@ const roleColors: Record<AppRole, string> = {
   kds: 'bg-orange-500/20 text-orange-600',
 };
 
+// Índice de configurações com keywords para busca global
+const SETTINGS_INDEX = [
+  { id: 'stores', label: 'Minhas Lojas', keywords: 'loja estabelecimento nome endereço cnpj plano' },
+  { id: 'tables', label: 'Mesas', keywords: 'mesa capacidade setor área quantidade layout comanda' },
+  { id: 'kds', label: 'KDS', keywords: 'kds cozinha tela tempo preparo status estação praça' },
+  { id: 'kds-stations', label: 'Praças KDS', keywords: 'praça estação cozinha forno bar produção' },
+  { id: 'kds-devices', label: 'Dispositivos KDS', keywords: 'dispositivo tablet tela monitor kds' },
+  { id: 'orders', label: 'Comportamento de Pedidos', keywords: 'aceitar automaticamente duplicar itens quantidade máxima comportamento pedido lançar' },
+  { id: 'printers', label: 'Impressoras', keywords: 'impressora térmica fiscal cupom comanda imprimir configurar ip porta' },
+  { id: 'cash-register', label: 'Caixa', keywords: 'caixa abertura fechamento sangria suprimento fundo troco operador' },
+  { id: 'production-targets', label: 'Metas de Produção', keywords: 'meta produção turno desempenho objetivo' },
+  { id: 'production-api', label: 'API de Produção', keywords: 'api integração produção webhook token' },
+  { id: 'automation', label: 'Integrações Automáticas', keywords: 'automação integração cardápioweb ifood delivery pedido externo' },
+  { id: 'business-rules', label: 'Regras de Negócio', keywords: 'regra negócio desconto limite cancelamento aprovação autorização' },
+  { id: 'notifications', label: 'Notificações', keywords: 'notificação som alerta volume pedido pronto espera' },
+  { id: 'announcements', label: 'Avisos Agendados', keywords: 'aviso comunicado programado agendamento mensagem' },
+  { id: 'push', label: 'Notificações Push', keywords: 'push notificação navegador celular mobile' },
+  { id: 'users', label: 'Usuários', keywords: 'usuário colaborador senha email função papel acesso' },
+  { id: 'roles', label: 'Funções', keywords: 'função papel permissão garçom caixa cozinha admin acesso' },
+  { id: 'invitations', label: 'Convites', keywords: 'convite link convidar novo usuário' },
+  { id: 'integrations', label: 'CardápioWeb', keywords: 'cardápioweb integração cardápio delivery ifood loja virtual' },
+  { id: 'webhooks', label: 'Delivery Pay', keywords: 'delivery pay webhook entregador logística' },
+  { id: 'delivery-logistics', label: 'Logística Delivery', keywords: 'logística delivery entrega raio km taxa frete' },
+  { id: 'ai-assistant', label: 'IA Assistente', keywords: 'ia inteligência artificial assistente bot chat' },
+];
+
 export default function PDVLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, signOut } = useAuth();
   const { roles, isLoading: rolesLoading } = useUserRole();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const { isPlatformAdmin } = usePlatformAdmin();
-  const { allTenants, isLoading: tenantLoading } = useTenantContext();
+  const { allTenants, activeTenant, isLoading: tenantLoading } = useTenantContext();
   const location = useLocation();
+  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Initialize realtime notifications
   useRealtimeNotifications();
@@ -83,6 +113,48 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
 
   // Auto-handler for integration orders
   const integrationAutoHandler = <IntegrationAutoHandler />;
+
+  const isAdmin = roles.includes('admin');
+  const isWaiter = roles.includes('waiter') && !isAdmin;
+  const isManagerLevel = roles.includes('gerente') || roles.includes('supervisor');
+
+  const userHasAnyPermission = (
+    isAdmin ||
+    isManagerLevel ||
+    navigation.some(item => item.permission && hasPermission(item.permission))
+  );
+
+  const filteredNavigation = navigation.filter(item => {
+    if (isAdmin) return true;
+    if (isManagerLevel) return true;
+    if (!userHasAnyPermission) {
+      return item.roles.some(role => roles.includes(role));
+    }
+    if (item.permission) {
+      return hasPermission(item.permission);
+    }
+    return item.roles.some(role => roles.includes(role));
+  });
+
+  const primaryRole = roles[0] as AppRole | undefined;
+
+  // Busca global: filtrar páginas e seções de configuração
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return null;
+
+    const pageResults = filteredNavigation
+      .filter(item => item.name.toLowerCase().includes(q))
+      .map(item => ({ type: 'page' as const, label: item.name, href: item.href, icon: item.icon }));
+
+    const settingsResults = (isAdmin || isManagerLevel)
+      ? SETTINGS_INDEX.filter(s =>
+          s.label.toLowerCase().includes(q) || s.keywords.toLowerCase().includes(q)
+        ).map(s => ({ type: 'settings' as const, label: s.label, href: `/settings/${s.id}`, icon: Settings }))
+      : [];
+
+    return [...pageResults, ...settingsResults];
+  }, [searchQuery, filteredNavigation, isAdmin, isManagerLevel]);
 
   if (loading || rolesLoading || permissionsLoading || tenantLoading) {
     return (
@@ -96,25 +168,10 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
     return <Navigate to="/auth" replace />;
   }
 
-  // Filter navigation based on user roles AND permissions
-  // If user has no roles, show all items (first user setup scenario)
-  const filteredNavigation = roles.length === 0 
-    ? navigation 
-    : navigation.filter(item => {
-        // Check role first
-        const hasRole = item.roles.some(role => roles.includes(role));
-        if (!hasRole) return false;
-        
-        // Then check permission if defined
-        if (item.permission) {
-          return hasPermission(item.permission);
-        }
-        
-        return true;
-      });
-
-  // Get primary role to display
-  const primaryRole = roles[0] as AppRole | undefined;
+  // Waiter's home page is always /tables
+  if (isWaiter && !isManagerLevel && location.pathname === '/dashboard') {
+    return <Navigate to="/tables" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -163,15 +220,79 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
           )}
 
           {/* Status indicators for desktop */}
-          <div className="hidden xl:flex px-4 py-2 border-b border-sidebar-border gap-2">
-            <OfflineIndicator />
-            <PrinterStatusIndicator />
+          <div className="hidden xl:flex flex-col px-4 py-2 border-b border-sidebar-border gap-2">
+            <div className="flex gap-2">
+              <OfflineIndicator />
+              <PrinterStatusIndicator />
+            </div>
+            <PwaInstallBanner />
+          </div>
+
+          {/* Global Search */}
+          <div className="px-3 py-2 border-b border-sidebar-border">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-sidebar-foreground/40" />
+              <Input
+                placeholder="Buscar..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 pr-7 h-8 text-sm bg-sidebar-accent border-0 text-sidebar-foreground placeholder:text-sidebar-foreground/40 focus-visible:ring-1"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-sidebar-foreground/40 hover:text-sidebar-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Navigation */}
           <ScrollArea className="flex-1 py-4">
             <nav className="space-y-1 px-3">
-              {filteredNavigation.map((item) => {
+              {/* Search results */}
+              {searchResults !== null ? (
+                searchResults.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-sidebar-foreground/50 text-xs">
+                    Nenhum resultado encontrado
+                  </div>
+                ) : (
+                  <>
+                    {searchResults.some(r => r.type === 'page') && (
+                      <p className="px-3 py-1 text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-wider">Páginas</p>
+                    )}
+                    {searchResults.filter(r => r.type === 'page').map(item => (
+                      <Link
+                        key={item.href}
+                        to={item.href}
+                        onClick={() => { setSidebarOpen(false); setSearchQuery(''); }}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
+                      >
+                        <item.icon className="h-5 w-5" />
+                        {item.label}
+                      </Link>
+                    ))}
+                    {searchResults.some(r => r.type === 'settings') && (
+                      <p className="px-3 py-1 mt-2 text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-wider">Configurações</p>
+                    )}
+                    {searchResults.filter(r => r.type === 'settings').map(item => (
+                      <Link
+                        key={item.href}
+                        to={item.href}
+                        onClick={() => { setSidebarOpen(false); setSearchQuery(''); }}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
+                      >
+                        <Settings className="h-4 w-4 opacity-60" />
+                        <span className="flex-1 text-left">{item.label}</span>
+                        <span className="text-[9px] text-sidebar-foreground/30 uppercase">Config</span>
+                      </Link>
+                    ))}
+                  </>
+                )
+              ) : (
+              filteredNavigation.map((item) => {
                 const isActive = location.pathname === item.href;
                 return (
                   <Link
@@ -189,7 +310,8 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
                     {item.name}
                   </Link>
                 );
-              })}
+              })
+              )}
             </nav>
 
             {/* Delivery Hub Section - admin only */}
@@ -275,14 +397,53 @@ export default function PDVLayout({ children }: { children: React.ReactNode }) {
         />
       )}
 
+      {/* Mobile bottom navigation bar */}
+      <nav className="xl:hidden fixed bottom-0 left-0 right-0 h-16 bg-sidebar border-t border-sidebar-border z-50 flex items-center justify-around px-1 safe-bottom">
+        {[
+          { href: '/order-management', icon: Kanban, label: 'Pedidos', permission: 'orders_view' },
+          { href: '/kds', icon: ChefHat, label: 'KDS', permission: 'kds_view' },
+          { href: '/tables', icon: UtensilsCrossed, label: 'Mesas', permission: 'tables_view' },
+          { href: '/counter', icon: Store, label: 'Balcão', permission: 'counter_view' },
+          { href: '/dashboard', icon: Home, label: 'Início', permission: 'dashboard_view' },
+        ]
+          .filter(item => isAdmin || isManagerLevel || !item.permission || hasPermission(item.permission as PermissionCode))
+          .slice(0, 5)
+          .map(item => {
+            const isActive = location.pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={() => setSidebarOpen(false)}
+                className={cn(
+                  'flex flex-col items-center justify-center gap-0.5 px-3 py-1 rounded-lg min-w-[52px] transition-colors',
+                  isActive
+                    ? 'text-sidebar-primary-foreground bg-sidebar-primary'
+                    : 'text-sidebar-foreground/60 hover:text-sidebar-foreground'
+                )}
+              >
+                <item.icon className="h-5 w-5" />
+                <span className="text-[10px] font-medium leading-tight">{item.label}</span>
+              </Link>
+            );
+          })}
+      </nav>
+
       {/* Main content */}
-      <main className="xl:ml-52 min-h-screen pt-16 xl:pt-0 pb-5">
-        <div className="p-4 xl:p-6">
+      <main className={`xl:ml-52 min-h-dvh pt-16 xl:pt-0 pb-20 xl:pb-5 ${
+        activeTenant?.plan === 'trial' &&
+        activeTenant?.trial_ends_at &&
+        Math.ceil((new Date(activeTenant.trial_ends_at).getTime() - Date.now()) / 86400000) > 0
+          ? 'pt-[104px] xl:pt-10'
+          : ''
+      }`}>
+        <div className="p-3 xl:p-6">
           {children}
         </div>
       </main>
       <ManagerApprovalListener />
       <OperatorTargetWidget />
+      <TrialBanner />
       <AppFooter />
     </div>
   );

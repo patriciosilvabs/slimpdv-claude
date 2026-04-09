@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import PDVLayout from '@/components/layout/PDVLayout';
+import { useUserPermissions } from '@/hooks/useUserPermissions';
+import { AccessDenied } from '@/components/auth/AccessDenied';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useOrders, Order, OrderStatus } from '@/hooks/useOrders';
@@ -24,12 +26,17 @@ function formatCurrency(value: number) {
 }
 
 export default function Orders() {
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   // Buscar apenas pedidos do histórico (delivered + cancelled)
   const historyStatuses: OrderStatus[] = ['delivered', 'cancelled'];
   const { data: historyOrders } = useOrders(historyStatuses);
   const printer = usePrinterOptional();
+
+  if (!permissionsLoading && !hasPermission('orders_view')) {
+    return <AccessDenied permission="orders_view" />;
+  }
 
   return (
     <PDVLayout>

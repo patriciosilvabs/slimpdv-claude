@@ -7,7 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useKdsStations, KdsStation, STATION_TYPE_LABELS, StationType } from '@/hooks/useKdsStations';
-import { Factory, Plus, Pencil, Trash2, GripVertical, Circle, Layers, Flame, ChefHat, ArrowRight } from 'lucide-react';
+import { Factory, Plus, Pencil, Trash2, GripVertical, Circle, Layers, Flame, ChefHat, ArrowRight, UtensilsCrossed } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -197,16 +197,17 @@ export function KdsStationsSettings() {
     return found ? found.icon : ChefHat;
   };
 
-  const productionFlow = stations.filter(s => s.is_active && s.station_type !== 'order_status');
+  const productionFlow = stations.filter(s => s.is_active && s.station_type !== 'order_status' && s.station_type !== 'waiter_serve');
   const orderStatusFlow = stations.filter(s => s.is_active && s.station_type === 'order_status');
+  const waiterServeFlow = stations.filter(s => s.is_active && s.station_type === 'waiter_serve');
 
   return (
     <>
-      {/* Flow visualization */}
+      {/* Flow visualization — produção */}
       {productionFlow.length > 0 && (
         <Card className="border-dashed">
           <CardContent className="pt-4 pb-3">
-            <p className="text-xs text-muted-foreground mb-3">Fluxo de produção — todo item passa por todas as praças na ordem abaixo:</p>
+            <p className="text-xs text-muted-foreground mb-3">Fluxo de produção — todos os pedidos:</p>
             <div className="flex items-center gap-1 flex-wrap">
               {productionFlow.map((station, idx) => {
                 const Icon = getIconComponent(station.icon);
@@ -237,6 +238,51 @@ export function KdsStationsSettings() {
                   })}
                 </>
               )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Flow visualization — garçom (somente mesa) */}
+      {waiterServeFlow.length > 0 && (
+        <Card className="border-dashed border-emerald-300 bg-emerald-50/40 dark:border-emerald-800 dark:bg-emerald-950/20">
+          <CardContent className="pt-4 pb-3">
+            <div className="flex items-center gap-2 mb-3">
+              <UtensilsCrossed className="h-4 w-4 text-emerald-600" />
+              <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                Fluxo de entrega — somente pedidos de mesa (dine-in):
+              </p>
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {/* Mostra a última order_status como ponto de partida */}
+              {orderStatusFlow.length > 0 ? (
+                <>
+                  {(() => {
+                    const last = orderStatusFlow[orderStatusFlow.length - 1];
+                    const Icon = getIconComponent(last.icon);
+                    return (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-medium border-border bg-muted/50 opacity-60">
+                        <Icon className="h-3.5 w-3.5" style={{ color: last.color }} />
+                        <span>{last.name}</span>
+                      </div>
+                    );
+                  })()}
+                  <ArrowRight className="h-3.5 w-3.5 text-emerald-500" />
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-medium border-muted bg-muted/30 opacity-60">
+                    <span className="text-muted-foreground">Cozinha (despacho)</span>
+                  </div>
+                  <ArrowRight className="h-3.5 w-3.5 text-emerald-500" />
+                </>
+              )}
+              {waiterServeFlow.map((station) => (
+                <div key={station.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border-2 text-sm font-semibold" style={{ borderColor: station.color, backgroundColor: station.color + '20', color: station.color }}>
+                  <UtensilsCrossed className="h-3.5 w-3.5" />
+                  <span>{station.name}</span>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -373,9 +419,23 @@ export function KdsStationsSettings() {
                 </div>
                 <Switch
                   checked={formData.station_type === 'order_status'}
-                  onCheckedChange={(checked) => setFormData({ 
-                    ...formData, 
+                  onCheckedChange={(checked) => setFormData({
+                    ...formData,
                     station_type: checked ? 'order_status' : 'custom'
+                  })}
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Garçom / Passa-prato</span>
+                  <p className="text-xs text-muted-foreground">Confirma entrega ao cliente (após despacho da cozinha)</p>
+                </div>
+                <Switch
+                  checked={formData.station_type === 'waiter_serve'}
+                  onCheckedChange={(checked) => setFormData({
+                    ...formData,
+                    station_type: checked ? 'waiter_serve' : 'custom'
                   })}
                 />
               </div>

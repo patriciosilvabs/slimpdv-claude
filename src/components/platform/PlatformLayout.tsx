@@ -1,13 +1,14 @@
 import { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { 
-  LayoutDashboard, 
-  Building2, 
-  CreditCard, 
+import {
+  LayoutDashboard,
+  Building2,
+  CreditCard,
   Users,
   ArrowLeft,
-  Shield
+  Shield,
+  Tag,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -19,6 +20,7 @@ const navItems = [
   { href: '/platform', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/platform/tenants', icon: Building2, label: 'Restaurantes' },
   { href: '/platform/subscriptions', icon: CreditCard, label: 'Assinaturas' },
+  { href: '/platform/plans', icon: Tag, label: 'Planos' },
   { href: '/platform/admins', icon: Users, label: 'Administradores' },
 ];
 

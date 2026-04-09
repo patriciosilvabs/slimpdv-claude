@@ -625,58 +625,68 @@ export default function OrderManagement() {
 
   return (
     <PDVLayout>
-      <div className="flex flex-col h-[calc(100vh-4rem)] gap-3 px-1">
+      <div className="flex flex-col h-[calc(100dvh-4rem)] xl:h-[calc(100dvh-0rem)] gap-2 xl:gap-3">
         {/* ── TOP BAR ─────────────────────────────────── */}
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-foreground">Últimos pedidos</h1>
+          <h1 className="text-lg xl:text-xl font-bold text-foreground">Pedidos</h1>
+          {/* Desktop actions */}
+          <div className="hidden xl:flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5 font-medium">
+              <Truck className="h-4 w-4" /> GESTÃO DE ENTREGAS
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 font-medium">
+              <Columns3 className="h-4 w-4" /> AJUSTAR LAYOUT
+            </Button>
+          </div>
         </div>
 
         {/* ── SEARCH + ACTIONS ROW ─────────────────────── */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Pesquise por cliente ou número do pedido"
-              className="pl-9"
+              placeholder="Cliente ou nº do pedido"
+              className="pl-9 h-10"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <Button className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold gap-1.5 min-h-[44px]" onClick={() => setNewOrderOpen(true)}>
+          {/* Desktop NOVO PEDIDO button */}
+          <Button className="hidden xl:flex bg-emerald-500 hover:bg-emerald-600 text-white font-semibold gap-1.5 min-h-[44px]" onClick={() => setNewOrderOpen(true)}>
             <Plus className="h-4 w-4" /> NOVO PEDIDO
           </Button>
-          <div className="hidden xl:block flex-1" />
-          <Button variant="outline" size="sm" className="hidden xl:inline-flex gap-1.5 font-medium">
-            <Truck className="h-4 w-4" /> GESTÃO DE ENTREGAS
-          </Button>
-          <Button variant="outline" size="sm" className="hidden xl:inline-flex gap-1.5 font-medium">
-            <Columns3 className="h-4 w-4" /> AJUSTAR LAYOUT
+          {/* Mobile compact button */}
+          <Button className="xl:hidden bg-emerald-500 hover:bg-emerald-600 text-white font-semibold gap-1 px-3 min-h-[40px]" onClick={() => setNewOrderOpen(true)}>
+            <Plus className="h-4 w-4" /> Novo
           </Button>
         </div>
 
-        {/* ── STATS + TABS ROW ──────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5">
-            <UtensilsCrossed className="h-3.5 w-3.5" /> {stats.avgTakeaway} min
+        {/* ── STATS ROW ──────────────────────── */}
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="gap-1 py-0.5 px-2 text-xs">
+            <UtensilsCrossed className="h-3 w-3" /> {stats.avgTakeaway}min
           </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5">
-            <Truck className="h-3.5 w-3.5" /> {stats.avgDelivery} min
+          <Badge variant="outline" className="gap-1 py-0.5 px-2 text-xs">
+            <Truck className="h-3 w-3" /> {stats.avgDelivery}min
           </Badge>
         </div>
 
+        {/* ── TABS (scrollable on mobile) ────────────── */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="w-full">
-          <TabsList className="w-full justify-start">
-            <TabsTrigger value="all">Todos ({stats.total})</TabsTrigger>
-            <TabsTrigger value="mesa">Mesa ({stats.mesa})</TabsTrigger>
-            <TabsTrigger value="counter">Balcão ({stats.counter})</TabsTrigger>
-            <TabsTrigger value="delivery">Delivery ({stats.delivery})</TabsTrigger>
-            <TabsTrigger value="integration">Integração ({stats.integration})</TabsTrigger>
-            <TabsTrigger value="cancelled" className="text-destructive">Cancelado ({stats.cancelled})</TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto scrollbar-none -mx-1 px-1">
+            <TabsList className="w-max min-w-full justify-start">
+              <TabsTrigger value="all" className="text-xs xl:text-sm whitespace-nowrap">Todos ({stats.total})</TabsTrigger>
+              <TabsTrigger value="mesa" className="text-xs xl:text-sm whitespace-nowrap">Mesa ({stats.mesa})</TabsTrigger>
+              <TabsTrigger value="counter" className="text-xs xl:text-sm whitespace-nowrap">Balcão ({stats.counter})</TabsTrigger>
+              <TabsTrigger value="delivery" className="text-xs xl:text-sm whitespace-nowrap">Delivery ({stats.delivery})</TabsTrigger>
+              <TabsTrigger value="integration" className="text-xs xl:text-sm whitespace-nowrap">Integração ({stats.integration})</TabsTrigger>
+              <TabsTrigger value="cancelled" className="text-xs xl:text-sm whitespace-nowrap text-destructive">Cancelado ({stats.cancelled})</TabsTrigger>
+            </TabsList>
+          </div>
         </Tabs>
 
         {/* ── SPLIT VIEW ────────────────────────────── */}
-        <div className="flex flex-1 gap-0 min-h-0 border rounded-lg overflow-hidden bg-background">
+        <div className="flex flex-1 gap-0 min-h-0 border rounded-lg overflow-hidden bg-background mb-1 xl:mb-0">
           {/* LEFT – "Seus pedidos" – hidden on tablet/mobile */}
           <div className="hidden xl:flex flex-[2] flex-col items-center justify-center min-h-0 border-r border-border">
             <p className="text-sm text-muted-foreground">Seus pedidos aparecerão aqui</p>
@@ -704,7 +714,7 @@ export default function OrderManagement() {
                     <div
                       key={order.id}
                       className={cn(
-                        'flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors',
+                        'flex items-center gap-2 xl:gap-3 px-3 xl:px-4 py-2.5 xl:py-3 cursor-pointer hover:bg-muted/50 transition-colors active:bg-muted',
                         isSelected && 'bg-primary/5'
                       )}
                       onClick={() => setSelectedOrderId(order.id)}

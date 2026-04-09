@@ -11,12 +11,16 @@ export interface BusinessRulesConfig {
   discount_limit_supervisor: number;
   // Rule 8: Cancellation authorization
   require_auth_cancellation: boolean; // require manager approval for cancellations
+  require_auth_cancellation_roles: string[];          // who needs approval (empty = all)
+  require_auth_cancellation_approvers: string[];      // who can approve (empty = all admins)
   // Rule 9: Block edit after kitchen
   block_edit_after_kitchen: boolean;
+  block_edit_after_kitchen_roles: string[];
   // Rule 10: Business hours
   business_hours_enabled: boolean;
   business_hours_open: string;        // "08:00"
   business_hours_close: string;       // "23:00"
+  business_hours_roles: string[];
   // Rule 11: Mandatory withdrawal
   mandatory_withdrawal_enabled: boolean;
   mandatory_withdrawal_amount: number;
@@ -25,21 +29,26 @@ export interface BusinessRulesConfig {
   cash_divergence_limit_value: number;
   // Rule 19: Block below cost
   block_below_cost_enabled: boolean;
+  block_below_cost_roles: string[];
   // Rule 22: Audit log
   audit_log_enabled: boolean;
   // Rule 12: Mandatory cash conference
   mandatory_cash_conference: boolean;
   // Rule 14: Cash register reopen authorization
   require_auth_cash_reopen: boolean;
+  require_auth_cash_reopen_roles: string[];
+  require_auth_cash_reopen_approvers: string[];
   // Rule 20: Operator sales target
   min_sales_target_enabled: boolean;
   min_sales_target_amount: number;
   min_sales_target_alert_percent: number;
+  min_sales_target_roles: string[];
   // Rule 21: Payment method restrictions
   payment_restrictions_enabled: boolean;
   payment_restricted_methods: string[];
   payment_restriction_start: string;
   payment_restriction_end: string;
+  payment_restrictions_roles: string[];
   // Rule 23: Supervisor mode
   supervisor_mode_enabled: boolean;
 }
@@ -52,25 +61,34 @@ const DEFAULT_RULES: BusinessRulesConfig = {
   discount_limit_gerente: 30,
   discount_limit_supervisor: 10,
   require_auth_cancellation: false,
+  require_auth_cancellation_roles: [],
+  require_auth_cancellation_approvers: [],
   block_edit_after_kitchen: false,
+  block_edit_after_kitchen_roles: [],
   business_hours_enabled: false,
   business_hours_open: '08:00',
   business_hours_close: '23:00',
+  business_hours_roles: [],
   mandatory_withdrawal_enabled: false,
   mandatory_withdrawal_amount: 2000,
   cash_divergence_limit_enabled: false,
   cash_divergence_limit_value: 10,
   block_below_cost_enabled: false,
+  block_below_cost_roles: [],
   audit_log_enabled: true,
   mandatory_cash_conference: false,
   require_auth_cash_reopen: false,
+  require_auth_cash_reopen_roles: [],
+  require_auth_cash_reopen_approvers: [],
   min_sales_target_enabled: false,
   min_sales_target_amount: 500,
   min_sales_target_alert_percent: 50,
+  min_sales_target_roles: [],
   payment_restrictions_enabled: false,
   payment_restricted_methods: [],
   payment_restriction_start: '21:00',
   payment_restriction_end: '08:00',
+  payment_restrictions_roles: [],
   supervisor_mode_enabled: false,
 };
 

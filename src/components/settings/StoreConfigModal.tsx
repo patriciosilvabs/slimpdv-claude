@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Building2, Save, Loader2, Copy, ExternalLink, Clock, User } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { client as apiClient } from '@/integrations/api/client';
 import { useTenant } from '@/hooks/useTenant';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -120,13 +120,8 @@ export function StoreConfigModal({ store, open, onClose }: StoreConfigModalProps
     if (!isOwner || !name.trim()) return;
     setIsSavingName(true);
     try {
-      const { error } = await supabase
-        .from('tenants')
-        .update({ name: name.trim() })
-        .eq('id', store.id);
-      if (error) throw error;
-      queryClient.invalidateQueries({ queryKey: ['tenant-membership'] });
-      queryClient.invalidateQueries({ queryKey: ['group-stores'] });
+      await apiClient.put(`/tenants/${store.id}`, { name: name.trim() });
+      queryClient.invalidateQueries({ queryKey: ['all-tenant-memberships'] });
       toast.success('Nome da loja salvo!');
     } catch (err: any) {
       toast.error(err.message || 'Erro ao salvar');

@@ -8,6 +8,7 @@ import { Flame, Clock, Check, Timer, History, Loader2, Package } from 'lucide-re
 import { cn } from '@/lib/utils';
 import { SectorOrderItem, useOrderSiblingItems, useOrderAllItems } from '@/hooks/useSectorOrderItems';
 import { useKdsActions } from '@/hooks/useKdsActions';
+import { useKdsStations } from '@/hooks/useKdsStations';
 import { KdsStationHistory } from '@/components/kds/KdsStationHistory';
 import { useDispatchChecklist } from '@/hooks/useDispatchChecklist';
 import { DispatchChecklistDialog } from '@/components/dispatch/DispatchChecklistDialog';
@@ -532,6 +533,7 @@ export function OvenKdsView({
   hideFlavorCategory,
 }: OvenKdsViewProps) {
   const { markReady, dispatchOvenItems } = useKdsActions();
+  const { waiterServeStation } = useKdsStations();
   const safeOvenItems = Array.isArray(ovenItems) ? ovenItems : [];
 
   // Local state for INSTANT visual transitions — immune to cache refetches
@@ -594,10 +596,10 @@ export function OvenKdsView({
 
   const handleDispatch = useCallback((ids: string[]) => {
     setDispatchedIds(prev => { const n = new Set(prev); ids.forEach(id => n.add(id)); return n; });
-    dispatchOvenItems.mutate(ids, {
+    dispatchOvenItems.mutate({ itemIds: ids, waiterServeStationId: waiterServeStation?.id ?? null }, {
       onError: () => setDispatchedIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; }),
     });
-  }, [dispatchOvenItems]);
+  }, [dispatchOvenItems, waiterServeStation]);
 
   return (
     <div className={cn("flex flex-col h-full", darkMode ? "bg-zinc-950 text-white" : "bg-background text-foreground")}>

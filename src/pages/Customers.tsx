@@ -1,5 +1,7 @@
 import { useState, useMemo } from 'react';
 import PDVLayout from '@/components/layout/PDVLayout';
+import { useUserPermissions } from '@/hooks/useUserPermissions';
+import { AccessDenied } from '@/components/auth/AccessDenied';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -61,9 +63,14 @@ function formatPhoneNumber(value: string): string {
 }
 
 export default function Customers() {
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const { data: customers, isLoading } = useCustomers();
   const { createCustomer, updateCustomer } = useCustomerMutations();
   const { toast } = useToast();
+
+  if (!permissionsLoading && !hasPermission('customers_view')) {
+    return <AccessDenied permission="customers_view" />;
+  }
 
   const [searchQuery, setSearchQuery] = useState('');
   const [editDialogOpen, setEditDialogOpen] = useState(false);

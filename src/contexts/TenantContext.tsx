@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { client as apiClient } from '@/integrations/api/client';
 import { useAuth } from '@/contexts/AuthContext';
 
 const ACTIVE_TENANT_KEY = 'activeTenantId';
@@ -8,10 +8,14 @@ const ACTIVE_TENANT_KEY = 'activeTenantId';
 export interface TenantMembership {
   tenant_id: string;
   is_owner: boolean;
+  trial_ends_at?: string | null;
+  plan?: string | null;
   tenant: {
     id: string;
     name: string;
     slug: string;
+    created_at?: string;
+    is_active?: boolean;
   } | null;
 }
 
@@ -45,24 +49,8 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     queryKey: ['all-tenant-memberships', user?.id],
     queryFn: async (): Promise<TenantMembership[]> => {
       if (!user?.id) return [];
-
-      const { data, error } = await supabase
-        .from('tenant_members')
-        .select(`
-          tenant_id,
-          is_owner,
-          tenant:tenants(id, name, slug)
-        `)
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-      if (!data) return [];
-
-      return data.map(item => ({
-        tenant_id: item.tenant_id,
-        is_owner: item.is_owner ?? false,
-        tenant: item.tenant as TenantMembership['tenant'],
-      }));
+      const data = await apiClient.get<{ tenants: TenantMembership[] }>('/tenant');
+      return data?.tenants || [];
     },
     enabled: !!user?.id,
     staleTime: 1000 * 60 * 5, // 5 minutes

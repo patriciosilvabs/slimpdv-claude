@@ -50,6 +50,7 @@ const PlatformDashboard = lazy(() => import("./pages/platform/PlatformDashboard"
 const PlatformTenants = lazy(() => import("./pages/platform/PlatformTenants"));
 const PlatformSubscriptions = lazy(() => import("./pages/platform/PlatformSubscriptions"));
 const PlatformAdmins = lazy(() => import("./pages/platform/PlatformAdmins"));
+const PlatformPlans = lazy(() => import("./pages/platform/PlatformPlans"));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center min-h-screen">
@@ -108,6 +109,7 @@ const App = () => {
                   <Route path="/platform/tenants" element={<PlatformTenants />} />
                   <Route path="/platform/subscriptions" element={<PlatformSubscriptions />} />
                   <Route path="/platform/admins" element={<PlatformAdmins />} />
+                  <Route path="/platform/plans" element={<PlatformPlans />} />
                   
                   {/* Protected routes - require tenant */}
                   <Route path="/dashboard" element={<RequireTenant><Dashboard /></RequireTenant>} />

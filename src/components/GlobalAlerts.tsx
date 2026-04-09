@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTables, useTableMutations } from '@/hooks/useTables';
 import { useOrders, useOrderMutations, type Order } from '@/hooks/useOrders';
 import { useTableWaitSettings } from '@/hooks/useTableWaitSettings';
@@ -51,6 +51,9 @@ function sendOsNotification(title: string, body: string) {
 export function GlobalAlerts() {
   const { tenantId } = useTenant();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // No KDS, notificações são apenas informativas — sem botão de ação (evita sair da tela)
+  const isKds = pathname.startsWith('/kds');
 
   const { data: tables } = useTables();
   const { data: orders } = useOrders(['pending', 'preparing', 'ready', 'delivered']);
@@ -116,9 +119,9 @@ export function GlobalAlerts() {
       toast.success(label, {
         description: 'A cozinha finalizou o preparo',
         duration: 8000,
-        action: isDineIn
+        action: isKds ? undefined : (isDineIn
           ? { label: 'Ver Mesa', onClick: () => navigate('/tables') }
-          : { label: 'Ver Pedidos', onClick: () => navigate('/orders') },
+          : { label: 'Ver Pedidos', onClick: () => navigate('/orders') }),
       });
       notifiedReadyOrdersRef.current.add(order.id);
     });
@@ -157,7 +160,7 @@ export function GlobalAlerts() {
       toast.success(label, {
         description: 'Um novo pedido foi recebido',
         duration: 6000,
-        action: { label: 'Ver', onClick: () => navigate('/orders') },
+        action: isKds ? undefined : { label: 'Ver', onClick: () => navigate('/orders') },
       });
     });
   }, [orders, tables, audioSettings.enabled, playNewOrderSound, tenantId, navigate]);
@@ -171,6 +174,13 @@ export function GlobalAlerts() {
       const dineInOrders = orders.filter(order => {
         if (order.order_type !== 'dine_in') return false;
         if (order.status === 'ready' || order.status === 'delivered' || order.status === 'cancelled') return false;
+        // Comida já pronta (ready_at set) ou servida — não alertar sobre espera
+        if ((order as any).ready_at || (order as any).served_at) return false;
+        // Verificar itens: se todos estão done/served, não alertar
+        const activeItems = (order as any).order_items?.filter((i: any) => !i.cancelled_at) || [];
+        if (activeItems.length > 0 && activeItems.every((i: any) =>
+          i.station_status === 'done' || i.station_status === 'dispatched' || !!i.served_at
+        )) return false;
         const table = tables?.find(t => t.id === order.table_id);
         return table?.status === 'occupied';
       });
@@ -245,6 +255,9 @@ export function GlobalAlerts() {
         if (!order.order_items) return;
         order.order_items.forEach(item => {
           if (!item.current_station_id || item.station_status === 'done' || item.station_status === 'dispatched' || item.status === 'cancelled') return;
+          // Itens no passa-prato (waiter_serve) não são "parados" — estão aguardando o garçom
+          const itemAnyStation = (item as any).current_station;
+          if (itemAnyStation?.station_type === 'waiter_serve' || itemAnyStation?.station_type === 'order_status') return;
 
           const itemAny = item as any;
           const stationStarted = itemAny.station_started_at

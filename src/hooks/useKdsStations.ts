@@ -20,7 +20,7 @@ export interface KdsStation {
   updated_at: string;
 }
 
-export type StationType = 'prep_start' | 'item_assembly' | 'assembly' | 'oven_expedite' | 'order_status' | 'custom';
+export type StationType = 'prep_start' | 'item_assembly' | 'assembly' | 'oven_expedite' | 'order_status' | 'waiter_serve' | 'custom';
 
 export const STATION_TYPE_LABELS: Record<StationType, string> = {
   prep_start: 'Em preparação',
@@ -28,6 +28,7 @@ export const STATION_TYPE_LABELS: Record<StationType, string> = {
   assembly: 'Em Produção',
   oven_expedite: 'Item em Finalização',
   order_status: 'Item Pronto',
+  waiter_serve: 'Servir — Garçom',
   custom: 'Personalizada',
 };
 
@@ -55,14 +56,17 @@ export function useKdsStations() {
 
   const activeStations = useMemo(() => stations.filter(s => s.is_active), [stations]);
   
-  // Estações de produção (exclui order_status)
-  const productionStations = useMemo(() => activeStations.filter(s => s.station_type !== 'order_status'), [activeStations]);
-  
+  // Estações de produção (exclui order_status e waiter_serve)
+  const productionStations = useMemo(() => activeStations.filter(s => s.station_type !== 'order_status' && s.station_type !== 'waiter_serve'), [activeStations]);
+
   // Estações de status do pedido (pode haver múltiplas)
   const orderStatusStations = useMemo(() => activeStations.filter(s => s.station_type === 'order_status'), [activeStations]);
-  
+
   // Primeira estação de status (para compatibilidade)
   const orderStatusStation = orderStatusStations[0];
+
+  // Estação do garçom (passa-prato)
+  const waiterServeStation = useMemo(() => activeStations.find(s => s.station_type === 'waiter_serve'), [activeStations]);
 
   const createStation = useMutation({
     mutationFn: async (station: Omit<KdsStation, 'id' | 'created_at' | 'updated_at'>) => {
@@ -185,6 +189,7 @@ export function useKdsStations() {
     productionStations,
     orderStatusStation,
     orderStatusStations,
+    waiterServeStation,
     isLoading,
     error,
     createStation,

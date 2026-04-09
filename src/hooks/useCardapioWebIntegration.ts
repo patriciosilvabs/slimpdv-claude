@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useTenant } from '@/hooks/useTenant';
 import { toast } from 'sonner';
 
 export interface CardapioWebIntegration {
@@ -53,19 +54,23 @@ export interface CardapioWebLog {
 
 export function useCardapioWebIntegration() {
   const queryClient = useQueryClient();
+  const { tenantId } = useTenant();
 
   // Fetch integration config
   const { data: integration, isLoading, error } = useQuery({
-    queryKey: ['cardapioweb-integration'],
+    queryKey: ['cardapioweb-integration', tenantId],
     queryFn: async () => {
+      if (!tenantId) return null;
       const { data, error } = await supabase
         .from('cardapioweb_integrations')
         .select('*')
+        .eq('tenant_id', tenantId)
         .maybeSingle();
 
       if (error) throw error;
       return data as CardapioWebIntegration | null;
     },
+    enabled: !!tenantId,
   });
 
   // Save integration
@@ -79,45 +84,26 @@ export function useCardapioWebIntegration() {
       auto_print?: boolean;
       auto_kds?: boolean;
     }) => {
-      // Get tenant_id
-      const { data: tenantData } = await supabase
-        .from('tenant_members')
-        .select('tenant_id')
-        .limit(1)
-        .single();
-
-      if (!tenantData?.tenant_id) {
+      if (!tenantId) {
         throw new Error('Tenant não encontrado');
       }
 
-      const payload = {
-        tenant_id: tenantData.tenant_id,
-        api_token: values.api_token,
-        store_id: values.store_id || null,
-        webhook_secret: values.webhook_secret || null,
-        is_active: values.is_active,
-        auto_accept: values.auto_accept ?? true,
-        auto_print: values.auto_print ?? true,
-        auto_kds: values.auto_kds ?? true,
-      };
+      const resp = await supabase.functions.invoke('cardapioweb-save-integration', {
+        body: {
+          api_token: values.api_token,
+          store_id: values.store_id || null,
+          webhook_secret: values.webhook_secret || null,
+          is_active: values.is_active,
+          auto_accept: values.auto_accept ?? true,
+          auto_print: values.auto_print ?? true,
+          auto_kds: values.auto_kds ?? true,
+        },
+      });
 
-      if (integration?.id) {
-        const { error } = await supabase
-          .from('cardapioweb_integrations')
-          .update(payload)
-          .eq('id', integration.id);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from('cardapioweb_integrations')
-          .insert(payload);
-
-        if (error) throw error;
-      }
+      if (resp.error) throw new Error(resp.error.message || 'Erro ao salvar integração');
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cardapioweb-integration'] });
+      queryClient.invalidateQueries({ queryKey: ['cardapioweb-integration', tenantId] });
       toast.success('Integração salva com sucesso!');
     },
     onError: (error: Error) => {
@@ -138,7 +124,7 @@ export function useCardapioWebIntegration() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cardapioweb-integration'] });
+      queryClient.invalidateQueries({ queryKey: ['cardapioweb-integration', tenantId] });
       toast.success('Integração removida');
     },
     onError: (error: Error) => {

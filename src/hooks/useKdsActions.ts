@@ -275,23 +275,49 @@ export function useKdsActions() {
 
   // Dispatch oven items (DESPACHAR)
   const dispatchOvenItems = useMutation({
-    mutationFn: async (itemIds: string[]) => {
+    mutationFn: async ({ itemIds, waiterServeStationId }: { itemIds: string[]; waiterServeStationId?: string | null }) => {
       if (user?.id) {
+        // Fetch items with order_type to route dine_in to waiter_serve
         const { data: items, error: fetchError } = await supabase
           .from('order_items')
-          .select('id, order_id, current_station_id, tenant_id')
+          .select('id, order_id, current_station_id, tenant_id, order:orders(order_type)')
           .in('id', itemIds);
         if (fetchError) throw fetchError;
 
-        const { error } = await supabase
-          .from('order_items')
-          .update({
-            current_station_id: null,
-            station_status: 'dispatched',
-            station_completed_at: new Date().toISOString(),
-          })
-          .in('id', itemIds);
-        if (error) throw error;
+        const now = new Date().toISOString();
+
+        // Split: dine_in (with waiter_serve configured) vs others
+        const dineInIds = waiterServeStationId
+          ? (items || []).filter(i => (i.order as any)?.order_type === 'dine_in').map(i => i.id)
+          : [];
+        const otherIds = (items || []).filter(i => !dineInIds.includes(i.id)).map(i => i.id);
+
+        // Route dine_in to waiter_serve station
+        if (dineInIds.length > 0 && waiterServeStationId) {
+          const { error } = await supabase
+            .from('order_items')
+            .update({
+              current_station_id: waiterServeStationId,
+              station_status: 'waiting',
+              station_started_at: null,
+              station_completed_at: now,
+            })
+            .in('id', dineInIds);
+          if (error) throw error;
+        }
+
+        // Dispatch non-dine_in items normally
+        if (otherIds.length > 0) {
+          const { error } = await supabase
+            .from('order_items')
+            .update({
+              current_station_id: null,
+              station_status: 'dispatched',
+              station_completed_at: now,
+            })
+            .in('id', otherIds);
+          if (error) throw error;
+        }
 
         if (items && items.length > 0) {
           // Fire-and-forget logs
@@ -318,7 +344,7 @@ export function useKdsActions() {
       }
       return invokeDeviceAction('dispatch_oven_items', { item_ids: itemIds });
     },
-    onMutate: (itemIds) => {
+    onMutate: ({ itemIds }) => {
       const idSet = new Set(itemIds);
       const snapshots = snapshotAndPatch(
         [['oven-items']],

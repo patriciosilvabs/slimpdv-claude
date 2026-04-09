@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -144,16 +145,29 @@ export default function Tables() {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const { hasAnyRole, isAdmin } = useUserRole();
+  const { hasAnyRole, isAdmin, isWaiter } = useUserRole();
   const { hasPermission } = useUserPermissions();
-  
+
+  // Garçom (sem admin) não acessa resumo nem pode cancelar pedido por padrão
+  const isWaiterOnly = isWaiter && !isAdmin;
+
   // Granular permission checks
   const canDeleteItems = hasPermission('tables_cancel_items');
   const canReopenTable = hasPermission('tables_reopen');
   const canSwitchTable = hasPermission('tables_switch');
   const canManagePayments = hasPermission('tables_manage_payments');
-  const canCloseBill = hasPermission('tables_close');
-  const canCancelOrder = hasPermission('tables_cancel_order');
+  const canCloseBill = isWaiterOnly ? false : hasPermission('tables_close');
+  // Garçom nunca pode cancelar pedido por padrão
+  const canCancelOrder = isWaiterOnly ? false : hasPermission('tables_cancel_order');
+
+  // Garçom pode cancelar item APENAS se ainda não entrou em produção
+  const canCancelItemForUser = (item: any): boolean => {
+    if (!canDeleteItems) return false;
+    if (!isWaiterOnly) return true; // admin/caixa/gerente podem sempre cancelar
+    // Garçom só pode cancelar se o item ainda não foi para produção
+    const inProduction = item.current_station_id && item.station_status !== 'waiting';
+    return !inProduction;
+  };
   const canChangeFees = hasPermission('tables_change_fees');
   
   const { settings: tableWaitSettings } = useTableWaitSettings();
@@ -340,9 +354,15 @@ export default function Tables() {
   const handleServeOrderItem = async (itemId: string) => {
     try {
       setIsServingItem(itemId);
+      const now = new Date().toISOString();
       const { error } = await supabase
         .from('order_items')
-        .update({ served_at: new Date().toISOString() })
+        .update({
+          served_at: now,
+          current_station_id: null,
+          station_status: 'done',
+          station_completed_at: now,
+        })
         .eq('id', itemId);
       
       if (error) throw error;
@@ -1145,7 +1165,7 @@ export default function Tables() {
   // Reset closing state when table changes
   useEffect(() => {
     if (selectedTable) {
-      setIsClosingBill(selectedTable.status === 'bill_requested');
+      setIsClosingBill(canCloseBill && selectedTable.status === 'bill_requested');
       setRegisteredPayments([]);
       // Reset discount, service, and split states
       setDiscountType('percentage');
@@ -1472,7 +1492,7 @@ export default function Tables() {
 
         <TabsContent value="tables" className="flex-1 m-0">
           <div className="flex h-full gap-4">
-            {/* Tables Grid - Layout fixo */}
+            {/* Tables Grid - oculto no desktop quando mesa selecionada */}
             <div className="flex flex-col flex-1 lg:w-2/3">
               {/* Legenda */}
               <div className="flex items-center justify-between mb-4">
@@ -1602,13 +1622,14 @@ export default function Tables() {
               )}
             </div>
 
-            {/* Side Panel - Table Details - Sempre visível */}
-            <div className="hidden lg:block w-1/3 min-w-[320px]">
-              <Card className="h-full flex flex-col">
+            {/* Side Panel - Table Details - fullscreen quando mesa selecionada */}
+            <div className="hidden lg:flex lg:flex-col w-1/3 min-w-[320px]">
+              <Card className={cn("flex flex-col overflow-hidden", selectedTable ? "h-[calc(100dvh-11rem)]" : "h-[calc(100dvh-11rem)]")}>
                 {selectedTable ? (
                   <>
                   <CardHeader className="pb-3">
-                    {/* Tabs Consumo/Resumo centralizadas no topo */}
+                    {/* Tabs Consumo/Resumo centralizadas no topo - Resumo só para admin/caixa */}
+                    {!isWaiterOnly && (
                     <div className="flex justify-center mb-3">
                       <div className="flex gap-1 p-1 bg-muted rounded-lg">
                         <Button
@@ -1627,6 +1648,7 @@ export default function Tables() {
                         </Button>
                       </div>
                     </div>
+                    )}
                     
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -1652,7 +1674,7 @@ export default function Tables() {
                     </div>
                   </CardHeader>
 
-                  <CardContent className="flex-1 flex flex-col space-y-4 overflow-hidden">
+                  <CardContent className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-4">
                     {/* ===== ABA CONSUMO ===== */}
                     {tableViewMode === 'consumo' && (
                       <>
@@ -1706,35 +1728,49 @@ export default function Tables() {
                           // Helper function to determine item status
                           const getItemStatus = (item: any) => {
                             if (item.served_at) return 'served';
-                            if (item.station_status === 'ready' || item.station_status === 'dispatched' || item.station_status === 'done' || item.station_status === 'completed') return 'ready';
+                            if (item.cancelled_at) return 'cancelled';
+                            const readyStatuses = ['ready', 'dispatched', 'done', 'completed'];
+                            if (readyStatuses.includes(item.station_status || '')) return 'ready';
                             if (item.current_station?.station_type === 'order_status') return 'ready';
-                            if (!item.current_station_id && !selectedOrder?.is_draft) return 'ready';
+                            if (item.current_station?.station_type === 'waiter_serve') return 'ready';
                             if (item.station_status === 'in_oven') return 'in_oven';
                             if (item.current_station_id && item.current_station) return 'in_production';
-                            if (selectedOrder?.status === 'pending' || selectedOrder?.is_draft) return 'pending';
+                            // Aguardando atribuição de estação KDS
+                            if (item.station_status === 'waiting') return 'pending';
+                            if (selectedOrder?.is_draft || selectedOrder?.status === 'pending') return 'pending';
+                            // Sem estação KDS configurada → pronto para servir
+                            if (!item.current_station_id) return 'ready';
                             return 'in_production';
                           };
                           
                           if (hasAnyItems) {
                             return (
-                              <div className="flex-1 flex flex-col min-h-0">
+                              <div>
                                 <h4 className="text-sm font-medium mb-2">Itens do Pedido</h4>
-                                <ScrollArea className="flex-1">
-                                  <div className="space-y-2 pr-2">
+                                <div className="space-y-2">
                                     {allItems.map((item: any) => {
                                       const itemStatus = getItemStatus(item);
                                       
                                       return (
-                                        <div 
-                                          key={item.id} 
+                                        <div
+                                          key={item.id}
                                           className={`flex flex-col p-2 rounded group transition-colors ${
-                                            itemStatus === 'served' 
-                                              ? 'bg-green-100 dark:bg-green-900/40 border border-green-300 dark:border-green-700' 
+                                            itemStatus === 'cancelled'
+                                              ? 'bg-muted/30 border border-muted opacity-60'
+                                              : itemStatus === 'served'
+                                              ? 'bg-green-100 dark:bg-green-900/40 border border-green-300 dark:border-green-700'
                                               : itemStatus === 'ready'
                                               ? 'bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800'
                                               : 'bg-muted/50'
                                           }`}
                                         >
+                                          {/* Badge Cancelado */}
+                                          {itemStatus === 'cancelled' && (
+                                            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium mb-1.5 bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 w-fit">
+                                              <Ban className="h-3 w-3" />
+                                              Cancelado
+                                            </div>
+                                          )}
                                           {/* Status Badge Individual */}
                                           {itemStatus === 'pending' && (
                                             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium mb-1.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400 w-fit animate-pulse-soft">
@@ -1866,20 +1902,20 @@ export default function Tables() {
                                         </div>
                                       );
                                     })}
-                                  </div>
-                                </ScrollArea>
+                                </div>
                               </div>
                             );
                           } else if (selectedTable.status === 'occupied') {
                             return (
-                              <div className="flex-1 flex flex-col items-center justify-center">
+                              <div className="py-8 flex flex-col items-center justify-center">
                                 <div className="text-center text-muted-foreground mb-4">
                                   <ShoppingBag className="h-12 w-12 mx-auto mb-2 opacity-50" />
                                   <p className="text-sm">Nenhum item no pedido</p>
                                 </div>
                                 {/* Close empty table button */}
-                                <Button 
-                                  variant="destructive" 
+                                {canCloseBill && (
+                                <Button
+                                  variant="destructive"
                                   size="sm"
                                   onClick={handleCloseEmptyTable}
                                   disabled={isClosingEmptyTable}
@@ -1887,6 +1923,7 @@ export default function Tables() {
                                   <XCircle className="h-4 w-4 mr-2" />
                                   {isClosingEmptyTable ? 'Fechando...' : 'Fechar Mesa (Sem Consumo)'}
                                 </Button>
+                                )}
                               </div>
                             );
                           }
@@ -1895,12 +1932,26 @@ export default function Tables() {
 
                       </>
                     )}
+
+                    {/* Botão Adicionar Pedido na aba Consumo (visível para garçom) */}
+                    {tableViewMode === 'consumo' && !isClosingBill && selectedTable?.status === 'occupied' && (
+                      <div className="pt-2">
+                        <Button
+                          className="w-full"
+                          onClick={() => setIsAddOrderModalOpen(true)}
+                          disabled={isAddingItems}
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          {isAddingItems ? 'Adicionando...' : 'Adicionar Pedido'}
+                        </Button>
+                      </div>
+                    )}
                       </>
                     )}
 
                     {/* Mensagem quando mesa está em fechamento e usuário clica em Consumo */}
                     {isClosingBill && tableViewMode === 'consumo' && (
-                      <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                      <div className="py-12 flex flex-col items-center justify-center text-center">
                         <div className="bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-lg p-6 max-w-sm">
                           <AlertCircle className="h-12 w-12 text-amber-600 dark:text-amber-400 mx-auto mb-4" />
                           <h3 className="text-lg font-semibold text-amber-800 dark:text-amber-300 mb-2">
@@ -1947,10 +1998,9 @@ export default function Tables() {
 
                         {/* Lista de Itens Completa */}
                         {selectedOrder.order_items && selectedOrder.order_items.length > 0 && (
-                          <div className="flex-1 flex flex-col min-h-0 border-t pt-3 mt-3">
+                          <div className="border-t pt-3 mt-3">
                             <h4 className="text-sm font-medium mb-2">Itens do Pedido</h4>
-                            <ScrollArea className="flex-1">
-                              <div className="space-y-2 pr-2">
+                            <div className="space-y-2">
                                 {selectedOrder.order_items.map((item: any) => (
                                   <div 
                                     key={item.id} 
@@ -1984,7 +2034,7 @@ export default function Tables() {
                                           {formatCurrency(item.total_price)}
                                         </span>
                                         {/* Botão cancelar - para itens não cancelados */}
-                                        {!item.cancelled_at && canDeleteItems && (
+                                        {!item.cancelled_at && canCancelItemForUser(item) && (
                                           <Button
                                             variant="ghost"
                                             size="icon"
@@ -2015,6 +2065,12 @@ export default function Tables() {
                                           </p>
                                         )}
                                       </div>
+                                    )}
+                                    {/* Aviso para garçom: item em produção não pode ser cancelado */}
+                                    {!item.cancelled_at && isWaiterOnly && item.current_station_id && item.station_status !== 'waiting' && (
+                                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                                        Em produção — solicite ao caixa/gerente para cancelar
+                                      </p>
                                     )}
                                     {/* Sub-items (pizzas individuais) COM PREÇOS no Resumo */}
                                     {item.sub_items && item.sub_items.length > 0 && (
@@ -2087,8 +2143,7 @@ export default function Tables() {
                                     </div>
                                   </div>
                                 ))}
-                              </div>
-                            </ScrollArea>
+                            </div>
                           </div>
                         )}
 
@@ -2802,12 +2857,15 @@ export default function Tables() {
             const openedTable = { ...tableToOpen, status: 'occupied' as const };
             setIsOpenTableDialogOpen(false);
             setOpenTableData(data);
-            setSelectedTable(openedTable);
 
             if (isMobile) {
+              // On mobile: set selectedTable AFTER setting drawer states
+              // so the table details dialog never opens in between
               setIsAddingMode(true);
               setIsOrderDrawerOpen(true);
+              setSelectedTable(openedTable);
             } else {
+              setSelectedTable(openedTable);
               setIsAddOrderModalOpen(true);
             }
 
@@ -2857,13 +2915,13 @@ export default function Tables() {
         isPending={updateTable.isPending || isOpeningTable}
       />
 
-      {/* Mobile Table Details Dialog */}
+      {/* Mobile Table Details — fullscreen Sheet */}
       {isMobile && (
-        <Dialog open={!!selectedTable} onOpenChange={() => setSelectedTable(null)}>
-          <DialogContent className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            {/* Tabs Consumo/Resumo centralizadas no topo */}
-            <div className="flex justify-center mb-3">
+        <Sheet open={!!selectedTable && !isOrderDrawerOpen && !isCartReviewOpen} onOpenChange={(open) => { if (!open) { setSelectedTable(null); setIsAddingMode(false); } }}>
+          <SheetContent side="bottom" className="h-[100dvh] flex flex-col p-0 rounded-t-xl">
+          <SheetHeader className="px-4 pt-4 pb-2 border-b shrink-0">
+            {/* Tabs Consumo/Resumo */}
+            <div className="flex justify-center mb-2">
               <div className="flex gap-1 p-1 bg-muted rounded-lg">
                 <Button
                   variant={tableViewMode === 'consumo' ? 'default' : 'ghost'}
@@ -2881,20 +2939,20 @@ export default function Tables() {
                 </Button>
               </div>
             </div>
-            
-            <DialogTitle className="flex items-center gap-2">
+            <SheetTitle className="flex items-center gap-2">
               Mesa {selectedTable?.number}
               {selectedTable && (
                 <Badge className={cn('text-xs', statusColors[selectedTable.status])}>
                   {isClosingBill ? 'Fechando' : statusLabels[selectedTable.status]}
                 </Badge>
               )}
-            </DialogTitle>
-          </DialogHeader>
+            </SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           
           {/* MOBILE: Regular View */}
           {!isClosingBill && (
-            <div className="space-y-4 pt-4">
+            <>
               {/* ===== ABA CONSUMO - MOBILE ===== */}
               {tableViewMode === 'consumo' && (
                 <>
@@ -2936,37 +2994,50 @@ export default function Tables() {
                     const allItems = selectedOrder?.order_items || [];
                     const hasAnyItems = allItems.length > 0;
                     
-                    // Helper function to determine item status
+                    // Helper function to determine item status (mobile)
                     const getItemStatus = (item: any) => {
                       if (item.served_at) return 'served';
-                      if (item.station_status === 'ready' || item.station_status === 'dispatched' || item.station_status === 'done' || item.station_status === 'completed') return 'ready';
+                      if (item.cancelled_at) return 'cancelled';
+                      const readyStatuses = ['ready', 'dispatched', 'done', 'completed'];
+                      if (readyStatuses.includes(item.station_status || '')) return 'ready';
                       if (item.current_station?.station_type === 'order_status') return 'ready';
-                      if (!item.current_station_id && !selectedOrder?.is_draft) return 'ready';
+                      if (item.current_station?.station_type === 'waiter_serve') return 'ready';
                       if (item.station_status === 'in_oven') return 'in_oven';
                       if (item.current_station_id && item.current_station) return 'in_production';
-                      if (selectedOrder?.status === 'pending' || selectedOrder?.is_draft) return 'pending';
+                      if (item.station_status === 'waiting') return 'pending';
+                      if (selectedOrder?.is_draft || selectedOrder?.status === 'pending') return 'pending';
+                      if (!item.current_station_id) return 'ready';
                       return 'in_production';
                     };
-                    
+
                     if (hasAnyItems) {
                       return (
                         <div className="space-y-2">
                           <h4 className="text-sm font-medium">Itens do Pedido</h4>
-                          <div className="max-h-[250px] overflow-y-auto space-y-2">
+                          <div className="space-y-2">
                             {allItems.map((item: any) => {
                               const itemStatus = getItemStatus(item);
                               
                               return (
-                                <div 
-                                  key={item.id} 
+                                <div
+                                  key={item.id}
                                   className={`flex flex-col p-2 rounded text-sm transition-colors ${
-                                    itemStatus === 'served' 
-                                      ? 'bg-green-100 dark:bg-green-900/40 border border-green-300 dark:border-green-700' 
+                                    itemStatus === 'cancelled'
+                                      ? 'bg-muted/30 border border-muted opacity-60'
+                                      : itemStatus === 'served'
+                                      ? 'bg-green-100 dark:bg-green-900/40 border border-green-300 dark:border-green-700'
                                       : itemStatus === 'ready'
                                       ? 'bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800'
                                       : 'bg-muted/50'
                                   }`}
                                 >
+                                  {/* Badge Cancelado - Mobile */}
+                                  {itemStatus === 'cancelled' && (
+                                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium mb-1.5 bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 w-fit">
+                                      <Ban className="h-3 w-3" />
+                                      Cancelado
+                                    </div>
+                                  )}
                                   {/* Status Badge Individual - Mobile */}
                                   {itemStatus === 'pending' && (
                                     <div className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium mb-1.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400 w-fit animate-pulse-soft">
@@ -3105,8 +3176,9 @@ export default function Tables() {
                         <ShoppingBag className="h-10 w-10 mx-auto mb-2 opacity-50" />
                         <p className="text-sm">Nenhum item no pedido</p>
                       </div>
-                      <Button 
-                        variant="destructive" 
+                      {canCloseBill && (
+                      <Button
+                        variant="destructive"
                         size="sm"
                         onClick={handleCloseEmptyTable}
                         disabled={isClosingEmptyTable}
@@ -3114,9 +3186,23 @@ export default function Tables() {
                         <XCircle className="h-4 w-4 mr-2" />
                         {isClosingEmptyTable ? 'Fechando...' : 'Fechar Mesa (Sem Consumo)'}
                       </Button>
+                      )}
                     </div>
                   ) : null}
 
+                  {/* Botão Adicionar Pedido na aba Consumo - mobile */}
+                  {!isClosingBill && selectedTable?.status === 'occupied' && (
+                    <div className="pt-2">
+                      <Button
+                        className="w-full"
+                        onClick={() => setIsAddOrderModalOpen(true)}
+                        disabled={isAddingItems}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        {isAddingItems ? 'Adicionando...' : 'Adicionar Pedido'}
+                      </Button>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -3156,7 +3242,7 @@ export default function Tables() {
                   {selectedOrder.order_items && selectedOrder.order_items.length > 0 && (
                     <div className="border-t pt-3 mt-3 space-y-2">
                       <h4 className="text-sm font-medium">Itens do Pedido</h4>
-                      <div className="max-h-[180px] overflow-y-auto space-y-2">
+                      <div className="space-y-2">
                         {selectedOrder.order_items.map((item: any) => (
                           <div 
                             key={item.id} 
@@ -3190,7 +3276,7 @@ export default function Tables() {
                                   {formatCurrency(item.total_price)}
                                 </span>
                                 {/* Botão cancelar - para itens não cancelados */}
-                                {!item.cancelled_at && canDeleteItems && (
+                                {!item.cancelled_at && canCancelItemForUser(item) && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -3221,6 +3307,12 @@ export default function Tables() {
                                   </p>
                                 )}
                               </div>
+                            )}
+                            {/* Aviso para garçom: item em produção não pode ser cancelado */}
+                            {!item.cancelled_at && isWaiterOnly && item.current_station_id && item.station_status !== 'waiting' && (
+                              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                                Em produção — solicite ao caixa/gerente para cancelar
+                              </p>
                             )}
                             {/* Sub-items (pizzas individuais) */}
                             {item.sub_items && item.sub_items.length > 0 && (
@@ -3312,14 +3404,9 @@ export default function Tables() {
                         <Button 
                           className="w-full" 
                           onClick={() => {
-                            const currentTable = selectedTable;
-                            setSelectedTable(null);
-                            setTimeout(() => {
-                              setSelectedTable(currentTable);
-                              setIsAddingMode(true);
-                              setIsOrderDrawerOpen(true);
-                            }, 100);
-                          }} 
+                            setIsAddingMode(true);
+                            setIsOrderDrawerOpen(true);
+                          }}
                           disabled={isAddingItems}
                         >
                           <Plus className="h-4 w-4 mr-2" />
@@ -3401,14 +3488,14 @@ export default function Tables() {
                   </div>
                 </>
               )}
-            </div>
+            </>
           )}
 
           {/* MOBILE: Closing View */}
           {isClosingBill && selectedOrder && (
-            <div className="space-y-4 pt-4">
+            <div className="space-y-4">
               {/* Order Items Summary */}
-              <div className="max-h-[180px] overflow-y-auto space-y-1">
+              <div className="space-y-1">
                 {selectedOrder.order_items?.map((item: any) => {
                   const allExtras = item.extras?.map((e: any) => ({
                     name: e.extra_name?.includes(': ') 
@@ -3597,8 +3684,9 @@ export default function Tables() {
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+          </div>
+        </SheetContent>
+      </Sheet>
       )}
 
       {/* Reservation Details Dialog */}
@@ -4096,8 +4184,10 @@ export default function Tables() {
             open={isOrderDrawerOpen}
             onOpenChange={(open) => {
               setIsOrderDrawerOpen(open);
-              if (!open && pendingCartItems.length === 0) {
+              if (!open) {
                 setIsAddingMode(false);
+                // If drawer closed without items sent, show table details dialog
+                // (selectedTable is already set from when table was opened)
               }
             }}
             tableNumber={selectedTable?.number}

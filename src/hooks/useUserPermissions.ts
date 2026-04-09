@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { client as apiClient } from '@/integrations/api/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserRole } from './useUserRole';
 
@@ -268,18 +268,13 @@ export const PERMISSION_GROUPS = {
 export function useUserPermissions() {
   const { user } = useAuth();
   const { isAdmin } = useUserRole();
-  
+
   const query = useQuery({
     queryKey: ['user-permissions', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
-      const { data, error } = await supabase
-        .from('user_permissions')
-        .select('*')
-        .eq('user_id', user.id);
-      
-      if (error) throw error;
-      return (data || []) as UserPermission[];
+      const data = await apiClient.get<UserPermission[]>('/user-permissions');
+      return data || [];
     },
     enabled: !!user?.id,
   });
@@ -294,11 +289,11 @@ export function useUserPermissions() {
     return codes.some(code => hasPermission(code));
   };
 
-  return { 
-    ...query, 
+  return {
+    ...query,
     permissions: query.data || [],
-    hasPermission, 
-    hasAnyPermission 
+    hasPermission,
+    hasAnyPermission,
   };
 }
 
@@ -308,13 +303,8 @@ export function useUserPermissionsById(userId: string | null) {
     queryKey: ['user-permissions', userId],
     queryFn: async () => {
       if (!userId) return [];
-      const { data, error } = await supabase
-        .from('user_permissions')
-        .select('*')
-        .eq('user_id', userId);
-      
-      if (error) throw error;
-      return (data || []) as UserPermission[];
+      const data = await apiClient.get<UserPermission[]>(`/user-permissions/user/${userId}`);
+      return data || [];
     },
     enabled: !!userId,
   });
@@ -325,40 +315,10 @@ export function useUserPermissionsById(userId: string | null) {
 // Hook for permission mutations (admin use)
 export function useUserPermissionMutations() {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
-
-  // Helper function to get tenant_id via RPC (avoids hook order issues)
-  const getTenantId = async (): Promise<string | null> => {
-    const { data } = await supabase.rpc('get_user_tenant_id');
-    return data;
-  };
 
   const setPermission = useMutation({
     mutationFn: async ({ userId, permission, granted }: { userId: string; permission: PermissionCode; granted: boolean }) => {
-      if (granted) {
-        const tenantId = await getTenantId();
-        // Upsert permission - using 'as any' to handle enum type mismatch until types are regenerated
-        const { error } = await supabase
-          .from('user_permissions')
-          .upsert({
-            user_id: userId,
-            permission: permission as any,
-            granted: true,
-            granted_by: user?.id,
-            tenant_id: tenantId,
-          }, { onConflict: 'user_id,permission' });
-        
-        if (error) throw error;
-      } else {
-        // Remove permission
-        const { error } = await supabase
-          .from('user_permissions')
-          .delete()
-          .eq('user_id', userId)
-          .eq('permission', permission as any);
-        
-        if (error) throw error;
-      }
+      await apiClient.post('/user-permissions/upsert', { userId, permission, granted });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['user-permissions', variables.userId] });
@@ -367,28 +327,7 @@ export function useUserPermissionMutations() {
 
   const setMultiplePermissions = useMutation({
     mutationFn: async ({ userId, permissions }: { userId: string; permissions: { permission: PermissionCode; granted: boolean }[] }) => {
-      // Delete all existing permissions for user
-      await supabase
-        .from('user_permissions')
-        .delete()
-        .eq('user_id', userId);
-
-      // Insert only granted permissions - using 'as any' to handle enum type mismatch until types are regenerated
-      const grantedPermissions = permissions.filter(p => p.granted);
-      if (grantedPermissions.length > 0) {
-        const tenantId = await getTenantId();
-        const { error } = await supabase
-          .from('user_permissions')
-          .insert(grantedPermissions.map(p => ({
-            user_id: userId,
-            permission: p.permission as any,
-            granted: true,
-            granted_by: user?.id,
-            tenant_id: tenantId,
-          })));
-        
-        if (error) throw error;
-      }
+      await apiClient.post('/user-permissions/bulk', { userId, permissions });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['user-permissions', variables.userId] });
@@ -397,36 +336,7 @@ export function useUserPermissionMutations() {
 
   const copyPermissions = useMutation({
     mutationFn: async ({ fromUserId, toUserId }: { fromUserId: string; toUserId: string }) => {
-      // Get source user permissions
-      const { data: sourcePermissions, error: fetchError } = await supabase
-        .from('user_permissions')
-        .select('permission')
-        .eq('user_id', fromUserId)
-        .eq('granted', true);
-      
-      if (fetchError) throw fetchError;
-      
-      // Delete target user permissions
-      await supabase
-        .from('user_permissions')
-        .delete()
-        .eq('user_id', toUserId);
-
-      // Copy permissions
-      if (sourcePermissions && sourcePermissions.length > 0) {
-        const tenantId = await getTenantId();
-        const { error } = await supabase
-          .from('user_permissions')
-          .insert(sourcePermissions.map(p => ({
-            user_id: toUserId,
-            permission: p.permission,
-            granted: true,
-            granted_by: user?.id,
-            tenant_id: tenantId,
-          })));
-        
-        if (error) throw error;
-      }
+      await apiClient.post('/user-permissions/copy', { fromUserId, toUserId });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['user-permissions', variables.toUserId] });

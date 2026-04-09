@@ -11,6 +11,7 @@ import { useKdsSettings } from '@/hooks/useKdsSettings';
 import { SectorQueuePanel } from '@/components/kds/SectorQueuePanel';
 import { OvenTimerPanel } from '@/components/kds/OvenTimerPanel';
 import { OvenKdsView } from '@/components/kds/OvenKdsView';
+import { KdsWaiterServePanel } from '@/components/kds/KdsWaiterServePanel';
 import { KdsDeviceLogin, getStoredDeviceAuth, clearDeviceAuth } from '@/components/kds/KdsDeviceLogin';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -92,6 +93,7 @@ export default function KDS() {
   const activeSectorId = selectedSectorId || userSector?.sectorId || null;
   const activeSector = stations?.find((s: any) => s.id === activeSectorId);
   const isOvenView = activeSector?.station_type === 'oven_expedite';
+  const isWaiterView = activeSector?.station_type === 'waiter_serve';
   const { settings: kdsSettings } = useKdsSettings(isDeviceAuth ? deviceAuth?.tenantId : undefined);
   // For device auth, prefer settings from edge function (bypasses RLS)
   const isDark = isDeviceAuth 
@@ -526,6 +528,16 @@ export default function KDS() {
                 skipOrderQueries={isDeviceAuth}
                 deviceAuth={isDeviceAuth ? deviceAuth : null}
                 hideFlavorCategory={kdsSettings.hideFlavorCategoryKds}
+              />
+            </div>
+          ) : isWaiterView ? (
+            <div className="flex-1">
+              <KdsWaiterServePanel
+                items={sectorItems}
+                stationId={activeSectorId!}
+                stationColor={activeSector?.color || null}
+                isLoading={itemsLoading}
+                darkMode={isDark}
               />
             </div>
           ) : (

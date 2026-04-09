@@ -10,12 +10,16 @@ function formatCurrency(value: number) {
 }
 
 export function OperatorTargetWidget() {
-  const { isAdmin } = useUserRole();
+  const { isAdmin, isGerente, isSupervisor, roles } = useUserRole();
   const { rules } = useBusinessRules();
   const { isEnabled, target, current, percent, isBelowAlert, orderCount } = useOperatorSalesTarget();
 
-  // Only show to non-admins when rule is enabled
-  if (!isEnabled || isAdmin) return null;
+  // Managers and above don't have operator targets
+  if (!isEnabled || isAdmin || isGerente || isSupervisor) return null;
+
+  // If specific roles are configured, check if current user qualifies
+  const targetRoles: string[] = rules.min_sales_target_roles ?? [];
+  if (targetRoles.length > 0 && !roles.some((r) => targetRoles.includes(r))) return null;
 
   return (
     <div className={`fixed bottom-20 left-4 z-40 bg-card border rounded-xl shadow-lg p-3 w-56 transition-all ${isBelowAlert ? 'border-amber-400' : 'border-border'}`}>

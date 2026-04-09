@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { client } from '@/integrations/api/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserRole } from '@/hooks/useUserRole';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -40,6 +41,8 @@ function getSavedPos(): Position {
 
 export function AiAssistant() {
   const { user } = useAuth();
+  const { isAdmin } = useUserRole();
+
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
@@ -183,7 +186,7 @@ export function AiAssistant() {
     setOpen(true);
   };
 
-  if (!user) return null;
+  if (!user || !isAdmin) return null;
 
   // Button position: use btnPos if dragged, otherwise follow widget pos
   const buttonStyle = btnPos
