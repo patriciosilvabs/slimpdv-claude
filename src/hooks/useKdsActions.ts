@@ -230,13 +230,17 @@ export function useKdsActions() {
         });
         if (error) throw error;
 
-        // Check if the order became ready and sync to CardapioWeb
+        // Get order_id for this item
         const { data: itemData } = await supabase
           .from('order_items')
           .select('order_id')
           .eq('id', itemId)
           .single();
         if (itemData?.order_id) {
+          // Explicitly trigger order completion check (mark_item_ready only updates item, not order)
+          await supabase.rpc('check_order_completion', { _order_id: itemData.order_id });
+
+          // Now fetch updated order status
           const { data: orderData } = await supabase
             .from('orders')
             .select('status, external_source')
