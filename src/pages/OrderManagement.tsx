@@ -61,25 +61,25 @@ function getOrderKdsStatus(items: OrderItem[]) {
   return null;
 }
 
-function KdsBadge({ items }: { items: OrderItem[] }) {
-  const kds = getOrderKdsStatus(items);
-  if (!kds) return null;
+// Unified badge: shows KDS status when available, order status as fallback
+function OrderStatusBadge({ order }: { order: Order }) {
+  const kds = getOrderKdsStatus(order.order_items ?? []);
 
-  if (kds.type === 'inOven') {
-    return (
-      <Badge className="bg-orange-500 text-white border-orange-400 text-[10px] py-0 px-1.5 gap-0.5 animate-pulse rounded-full">
-        <Flame className="h-3 w-3" /> FORNO
-      </Badge>
-    );
-  }
-  if (kds.type === 'ready') {
+  if (kds?.type === 'ready') {
     return (
       <Badge className="bg-emerald-500 text-white border-emerald-400 text-[10px] py-0 px-1.5 rounded-full">
         ✅ PRONTO
       </Badge>
     );
   }
-  if (kds.type === 'inProgress') {
+  if (kds?.type === 'inOven') {
+    return (
+      <Badge className="bg-orange-500 text-white border-orange-400 text-[10px] py-0 px-1.5 gap-0.5 animate-pulse rounded-full">
+        <Flame className="h-3 w-3" /> FORNO
+      </Badge>
+    );
+  }
+  if (kds?.type === 'inProgress') {
     return (
       <Badge
         className="text-white border-transparent text-[10px] py-0 px-1.5 rounded-full"
@@ -89,7 +89,16 @@ function KdsBadge({ items }: { items: OrderItem[] }) {
       </Badge>
     );
   }
-  return null;
+
+  const st = STATUS_MAP[order.status] ?? STATUS_MAP.pending;
+  return (
+    <Badge
+      variant="outline"
+      className={cn('text-[11px] py-0.5 px-2.5 border font-medium rounded-full', st.color)}
+    >
+      {st.label}
+    </Badge>
+  );
 }
 
 function ItemKdsBadge({ item }: { item: OrderItem }) {
@@ -704,7 +713,6 @@ export default function OrderManagement() {
                     <p className="text-sm">Nenhum pedido encontrado</p>
                   </div>
                 ) : filtered.map(order => {
-                  const st = STATUS_MAP[order.status] ?? STATUS_MAP.pending;
                   const isSelected = selectedOrderId === order.id;
                   const displayNumber = (order as any).display_number ? String((order as any).display_number) : order.id.slice(-5).toUpperCase();
                   const isIfood = order.external_source === 'ifood';
@@ -785,13 +793,7 @@ export default function OrderManagement() {
                         <span className="text-xs text-muted-foreground">
                           {elapsedText(order.created_at)}
                         </span>
-                        <Badge
-                          variant="outline"
-                          className={cn('text-[11px] py-0.5 px-2.5 border font-medium rounded-full', st.color)}
-                        >
-                          {st.label}
-                        </Badge>
-                        <KdsBadge items={order.order_items ?? []} />
+                        <OrderStatusBadge order={order} />
                         {(order as any).logistics_status === 'buffered' && (
                           <Badge className="bg-amber-500 text-white border-amber-400 text-[10px] py-0 px-1.5 rounded-full animate-pulse">
                             ⏳ EM BUFFER
@@ -872,9 +874,7 @@ export default function OrderManagement() {
                       <Button variant="ghost" size="icon" onClick={() => handleManualPrint(selectedOrder)} title="Imprimir comanda">
                         <Printer className="h-5 w-5" />
                       </Button>
-                      <Badge variant="outline" className={cn('border rounded-full', STATUS_MAP[selectedOrder.status]?.color)}>
-                        {STATUS_MAP[selectedOrder.status]?.label}
-                      </Badge>
+                      <OrderStatusBadge order={selectedOrder} />
                     </div>
                   </div>
 
@@ -1031,9 +1031,7 @@ export default function OrderManagement() {
                     <Button variant="ghost" size="icon" onClick={() => handleManualPrint(selectedOrder)} title="Imprimir comanda">
                       <Printer className="h-5 w-5" />
                     </Button>
-                    <Badge variant="outline" className={cn('border rounded-full', STATUS_MAP[selectedOrder.status]?.color)}>
-                      {STATUS_MAP[selectedOrder.status]?.label}
-                    </Badge>
+                    <OrderStatusBadge order={selectedOrder} />
                   </div>
                 </div>
                 {/* Delivery address - mobile */}

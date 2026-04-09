@@ -7,6 +7,17 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { markItemAsRecentlyMoved } from './useOrders';
 
+// Sync CardapioWeb status when order becomes ready from KDS
+async function syncCardapioWebReady(orderId: string) {
+  try {
+    await supabase.functions.invoke('cardapioweb-sync-status', {
+      body: { order_id: orderId, new_status: 'ready' },
+    });
+  } catch (err) {
+    console.error('[KdsWorkflow] CardápioWeb sync failed:', err);
+  }
+}
+
 interface OrderItem {
   id: string;
   order_id: string;
@@ -190,9 +201,11 @@ export function useKdsWorkflow() {
               .from('orders')
               .update({ status: 'ready', ready_at: new Date().toISOString() })
               .eq('id', itemData.order_id);
-              
+
             if (error) {
               console.error('Erro ao atualizar status do pedido para ready:', error);
+            } else {
+              syncCardapioWebReady(itemData.order_id);
             }
           }
         }
@@ -447,13 +460,17 @@ export function useKdsWorkflow() {
 
           if (allItemsReady) {
             // Atualizar pedido para 'ready'
-            await supabase
+            const { error: readyError } = await supabase
               .from('orders')
-              .update({ 
+              .update({
                 status: 'ready',
                 ready_at: new Date().toISOString()
               })
               .eq('id', itemData.order_id);
+
+            if (!readyError) {
+              syncCardapioWebReady(itemData.order_id);
+            }
           }
         }
 
@@ -710,9 +727,12 @@ export function useKdsWorkflow() {
           i.cancelled_at || i.station_status === 'done' || !!i.served_at
         );
         if (allDone) {
-          await supabase.from('orders')
+          const { error: serveReadyError } = await supabase.from('orders')
             .update({ status: 'ready', ready_at: now })
             .eq('id', itemData.order_id);
+          if (!serveReadyError) {
+            syncCardapioWebReady(itemData.order_id);
+          }
         }
       }
 

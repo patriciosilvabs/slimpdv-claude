@@ -229,6 +229,26 @@ export function useKdsActions() {
           _user_id: user.id,
         });
         if (error) throw error;
+
+        // Check if the order became ready and sync to CardapioWeb
+        const { data: itemData } = await supabase
+          .from('order_items')
+          .select('order_id')
+          .eq('id', itemId)
+          .single();
+        if (itemData?.order_id) {
+          const { data: orderData } = await supabase
+            .from('orders')
+            .select('status, external_source')
+            .eq('id', itemData.order_id)
+            .single();
+          if (orderData?.status === 'ready' && orderData?.external_source === 'cardapioweb') {
+            supabase.functions.invoke('cardapioweb-sync-status', {
+              body: { order_id: itemData.order_id, new_status: 'ready' },
+            }).catch(err => console.error('[KdsActions] CardápioWeb sync failed:', err));
+          }
+        }
+
         return data;
       }
       return invokeDeviceAction('mark_item_ready', { item_id: itemId });
@@ -339,6 +359,20 @@ export function useKdsActions() {
           await Promise.all(
             orderIds.map(orderId => supabase.rpc('check_order_completion', { _order_id: orderId }))
           );
+
+          // Sync CardapioWeb for any orders that became ready
+          for (const orderId of orderIds) {
+            const { data: orderData } = await supabase
+              .from('orders')
+              .select('status, external_source')
+              .eq('id', orderId)
+              .single();
+            if (orderData?.status === 'ready' && orderData?.external_source === 'cardapioweb') {
+              supabase.functions.invoke('cardapioweb-sync-status', {
+                body: { order_id: orderId, new_status: 'ready' },
+              }).catch(err => console.error('[KdsActions] CardápioWeb sync failed:', err));
+            }
+          }
         }
         return true;
       }
